@@ -1,0 +1,3 @@
+-r installation.txt
+flake8
+sphinx

@@ -142,7 +142,7 @@ class Tracer(object):
 
     """
 
-    def __init__(self, span_queue):
+    def __init__(self, span_queue, **kwargs):
         pass
 
     def start_span(self, operation_name, start_time=None, child_of=None):

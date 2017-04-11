@@ -44,4 +44,10 @@ def shutdown(application):
     :rtype: tornado.concurrent.Future
 
     """
-    pass
+    import opentracing
+
+    if not isinstance(opentracing.tracer, opentracing.Tracer):
+        future = opentracing.tracer.stop()
+        opentracing.tracer = opentracing.Tracer()  # install the no-op tracer
+        setattr(application, 'opentracing', opentracing.tracer)
+        return future

@@ -196,3 +196,18 @@ class Tracer(object):
 
         """
         pass
+
+    def stop(self):
+        """
+        Terminate the tracer and reporting layer,
+
+        This method disables future traces from being started, starts
+        the reporting shutdown process which is asynchronous, and returns
+        a :class:`~tornado.concurrent.Future` that will resolve when the
+        reporter has finished processing the span queue.
+
+        :returns: :class:`~tornado.concurrent.Future` that blocks until
+            the span queue has been completely consumed.
+        :rtype: tornado.concurrent.Future
+
+        """

@@ -43,3 +43,17 @@ class InstallationTests(unittest.TestCase):
                 sprocketstracing.install(self.application, self.io_loop)
                 queue_cls.assert_called_once_with()
                 tracer_cls.assert_called_once_with(queue_cls.return_value)
+
+    def test_that_reporter_is_launched(self):
+        with mock.patch('tornado.queues.Queue') as queue_cls:
+            sprocketstracing.install(self.application, self.io_loop)
+            self.io_loop.spawn_callback.assert_called_once_with(
+                sprocketstracing.reporting.report_spans,
+                queue_cls.return_value)
+
+    def test_that_opentracing_settings_are_passed_to_report_spans(self):
+        self.application.settings['opentracing'] = {'something': mock.sentinel}
+        sprocketstracing.install(self.application, self.io_loop)
+        self.io_loop.spawn_callback.assert_called_once_with(
+            sprocketstracing.reporting.report_spans, mock.ANY,
+            **self.application.settings['opentracing'])

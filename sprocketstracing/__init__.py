@@ -21,15 +21,16 @@ def install(application, io_loop):
     ``opentracing.tracer`` global.
 
     """
+    from sprocketstracing import reporting, tracing
     import opentracing
-    import sprocketstracing.tracing
     import tornado.queues
 
     span_queue = tornado.queues.Queue()
     settings = application.settings.get('opentracing', {})
-    tracer = sprocketstracing.tracing.Tracer(span_queue, **settings)
+    tracer = tracing.Tracer(span_queue, **settings)
     opentracing.tracer = tracer
     setattr(application, 'opentracing', tracer)
+    io_loop.spawn_callback(reporting.report_spans, span_queue, **settings)
 
 
 def shutdown(application):

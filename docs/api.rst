@@ -22,3 +22,7 @@ Request Handlers
 ----------------
 .. autoclass:: sprocketstracing.tracing.RequestHandlerMixin
    :members:
+
+Span Reporting
+--------------
+.. autofunction:: sprocketstracing.reporting.report_spans

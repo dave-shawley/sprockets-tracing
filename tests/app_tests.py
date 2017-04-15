@@ -8,26 +8,17 @@ from tornado import web
 import opentracing
 
 import sprocketstracing.reporting
+import tests.helpers
 
 
-class InstallationTests(unittest.TestCase):
-
-    def setUp(self):
-        super(InstallationTests, self).setUp()
-        self.saved_tracer = opentracing.tracer
-        self.application = web.Application([])
-        self.io_loop = mock.Mock()
-
-    def tearDown(self):
-        super(InstallationTests, self).tearDown()
-        opentracing.tracer = self.saved_tracer
+class InstallationTests(tests.helpers.SprocketsTracingTestCase):
 
     def test_that_opentracing_tracer_is_set(self):
         sprocketstracing.install(self.application, self.io_loop)
         self.assertIsNot(opentracing.tracer, self.saved_tracer)
 
     def test_that_opentracing_settings_are_passed_to_tracer(self):
-        self.application.settings['opentracing'] = {'something': mock.sentinel}
+        self.application.settings['opentracing']['something'] = mock.sentinel
         with mock.patch('sprocketstracing.tracing.Tracer') as tracer_cls:
             sprocketstracing.install(self.application, self.io_loop)
             tracer_cls.assert_called_once_with(
@@ -42,17 +33,20 @@ class InstallationTests(unittest.TestCase):
             with mock.patch('sprocketstracing.tracing.Tracer') as tracer_cls:
                 sprocketstracing.install(self.application, self.io_loop)
                 queue_cls.assert_called_once_with()
-                tracer_cls.assert_called_once_with(queue_cls.return_value)
+                tracer_cls.assert_called_once_with(
+                    queue_cls.return_value,
+                    **self.application.settings['opentracing'])
 
     def test_that_reporter_is_launched(self):
         with mock.patch('tornado.queues.Queue') as queue_cls:
             sprocketstracing.install(self.application, self.io_loop)
             self.io_loop.spawn_callback.assert_called_once_with(
                 sprocketstracing.reporting.report_spans,
-                queue_cls.return_value)
+                queue_cls.return_value,
+                **self.application.settings['opentracing'])
 
     def test_that_opentracing_settings_are_passed_to_report_spans(self):
-        self.application.settings['opentracing'] = {'something': mock.sentinel}
+        self.application.settings['opentracing']['something'] = mock.sentinel
         sprocketstracing.install(self.application, self.io_loop)
         self.io_loop.spawn_callback.assert_called_once_with(
             sprocketstracing.reporting.report_spans, mock.ANY,
@@ -64,7 +58,8 @@ class ShutdownTests(unittest.TestCase):
     def setUp(self):
         super(ShutdownTests, self).setUp()
         self.saved_tracer = opentracing.tracer
-        self.application = web.Application([])
+        self.application = web.Application(
+            [], opentracing={'propagation_syntax': 'zipkin'})
         self.io_loop = mock.Mock()
 
     def tearDown(self):

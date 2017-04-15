@@ -1,4 +1,10 @@
+import binascii
+import os
+
 from tornado import web
+import opentracing
+
+import sprocketstracing.propagation
 
 
 class RequestHandlerMixin(web.RequestHandler):
@@ -46,7 +52,87 @@ class SpanContext(object):
     """
 
     def __init__(self, **kwargs):
-        self._baggage = {}
+        super(SpanContext, self).__init__()
+        self._trace_id = kwargs.get('trace_id')
+        self._span_id = kwargs.get('span_id')
+        self._sampled = kwargs.get('sampled')
+        self._baggage = kwargs.get('baggage', {})
+        self._parents = []
+        for parent in kwargs.get('parents', []):
+            if isinstance(parent, SpanContext):
+                self._parents.append(parent)
+            elif isinstance(parent, Span):
+                self._parents.append(parent.context)
+            elif isinstance(parent, (bytes, str)):
+                self._parents.append(SpanContext(span_id=parent))
+
+    @property
+    def trace_id(self):
+        """
+        Unique identifier for this trace.
+
+        The trace ID is a opaque value that identifies this trace
+        across process boundaries.  If a trace ID is not explicitly
+        set, then this implementation will generate a random 128-bit
+        value and return it as a string of lower-cased hexadecimal
+        digits.
+
+        """
+        if self._trace_id is None:
+            if self.parents:
+                self._trace_id = self.parents[0].trace_id
+            else:
+                self._trace_id = binascii.hexlify(os.urandom(16))
+        return self._trace_id
+
+    @property
+    def span_id(self):
+        """
+        Unique identifier for this span.
+
+        The span ID is a opaque value that uniquely identifies this
+        span within the parent span.  If a span ID is not explicitly
+        set, then this implementation will generate a random 64-bit
+        value and return it as a string of lower-cased hexadecimal
+        digits.
+
+        """
+        if self._span_id is None:
+            self._span_id = binascii.hexlify(os.urandom(8))
+        return self._span_id
+
+    @property
+    def parents(self):
+        """
+        Parents of this span.
+
+        This :class:`list` contains the :class:`.SpanContext` instances
+        that represent the parent spans.
+
+        """
+        return self._parents[:]
+
+    @property
+    def sampled(self):
+        """Should this span be sampled?"""
+        if self._sampled is None:
+            for parent in self.parents:
+                if parent.sampled:
+                    return True
+        return bool(self._sampled)
+
+    @sampled.setter
+    def sampled(self, on_or_off):
+        self._sampled = on_or_off
+
+    @property
+    def baggage(self):
+        return self._baggage.copy()
+
+    def __bool__(self):
+        """Is this context valid?"""
+        return (self.sampled or len(self.parents) > 0 or
+                (self._trace_id is not None and self._span_id is not None))
 
     def __iter__(self):
         """Iterate over the user-specified baggage items."""
@@ -76,7 +162,9 @@ class Span(object):
     """
 
     def __init__(self, span_name, context, **kwargs):
-        pass
+        super(Span, self).__init__()
+        self.operation_name = span_name
+        self._context = context
 
     @property
     def context(self):
@@ -86,7 +174,16 @@ class Span(object):
         :rtype: SpanContext
 
         """
-        return None
+        return self._context
+
+    @property
+    def tracer(self):
+        """
+        Returns the tracer that created this span.
+
+        :rtype: .Tracer
+        """
+        return opentracing.tracer
 
     def set_operation_name(self, new_name):
         """
@@ -95,6 +192,9 @@ class Span(object):
         :param str new_name: the name to report this span as.
 
         """
+
+    def log_kv(self, log_values):
+        pass
 
     def finish(self, end_time=None):
         """
@@ -123,6 +223,27 @@ class Span(object):
 
         """
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.log_kv({'python.exception.type': exc_type,
+                         'python.exception.val': exc_val,
+                         'python.exception.tb': exc_tb})
+        self.finish()
+
+    # Non-standard properties & methods
+    @property
+    def sampled(self):
+        """Is sampling enabled for this span?"""
+        return self.context.sampled
+
+    @sampled.setter
+    def sampled(self, on_or_off):
+        """Manipulate the context's sampled property."""
+        self.context.sampled = on_or_off
+
 
 class Tracer(object):
 
@@ -143,19 +264,19 @@ class Tracer(object):
     """
 
     def __init__(self, span_queue, **kwargs):
-        pass
+        self.propagation_syntax = kwargs['propagation_syntax']
 
-    def start_span(self, operation_name, start_time=None, child_of=None):
+    def start_span(self, operation_name, **kwargs):
         """
         Create a new span for an operation.
 
         :param str operation_name: the name to report the new span as.
             The span's name can be changed by calling the
             :meth:`~Span.set_operation_name` method on the new span.
-        :param float start_time: optional number of seconds since the
+        :keyword float start_time: optional number of seconds since the
             Epoch that this span started at.  If this parameter is omitted,
             then the current time is used.
-        :param SpanContext child_of: explicitly name the parent span's
+        :keyword SpanContext child_of: explicitly name the parent span's
             context.
         :returns: a newly created :class:`.Span` that has already been
             started.
@@ -165,6 +286,11 @@ class Tracer(object):
         instances.
 
         """
+        if kwargs.get('child_of'):
+            context = SpanContext(parents=[kwargs.pop('child_of')])
+        else:
+            context = SpanContext()
+        return Span(operation_name, context, **kwargs)
 
     def inject(self, span_context, format_, carrier):
         """
@@ -180,7 +306,9 @@ class Tracer(object):
         to insert span identifiers into the `carrier`.
 
         """
-        pass
+        propagator = sprocketstracing.propagation.get_syntax(
+            self.propagation_syntax)
+        propagator.inject(span_context, format_, carrier)
 
     def extract(self, format_, carrier):
         """
@@ -195,7 +323,10 @@ class Tracer(object):
         :rtype: SpanContext
 
         """
-        pass
+        propagator = sprocketstracing.propagation.get_syntax(
+            self.propagation_syntax)
+        kwargs = propagator.extract(format_, carrier)
+        return SpanContext(**kwargs)
 
     def stop(self):
         """

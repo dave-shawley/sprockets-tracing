@@ -42,3 +42,60 @@ trace information to the tracing system.
 .. _opentracing-python: https://github.com/opentracing/opentracing-python
    /blob/4109459ae6ed4f5444b60ffe12127d8a6b85e1bd/opentracing
    /__init__.py#L36-L39
+
+The :class:`sprocketstracing.tracing.RequestHandlerMixin` handles
+extracting the active span from the incoming headers and reporting the
+span processing details to the aggregator if sampling is enabled.
+A simple implementation of the mixin looks something like:
+
+.. code-block:: python
+
+   class RequestHandlerMixin(web.RequestHandler):
+      
+       def prepare(self):
+           super(RequestHandlerMixin, self).prepare()
+           kwargs = {'start_time': ioloop.time()}
+           context = opentracing.tracer.extract(
+              opentracing.Format.HTTP_HEADERS,
+              self.request.headers)
+           if context:
+              kwargs['child_of'] = context
+           self.span = opentracing.tracer.start_span(
+              self.opentracing_options['operation_name'], **kwargs)
+           self.span.set_tag('span.kind', 'server')
+           self.span.set_tag('http.method', self.request.method)
+           self.span.set_tag('http.version', self.request.version)
+           self.span.set_tag('peer.address', self.request.remote_ip)
+
+       def on_finish(self):
+           self.span.set_tag('http.status_code', self.get_status())
+           self.span.finish(end_time=ioloop.time())
+       
+       def log_exception(self, typ, value, tb):
+           self.span.log_kv({'python.exception.type': typ,
+                             'python.exception.value': value,
+                             'python.exception.tb': tb})
+           super(RequestHandlerMixin, self).log_exception(
+               typ, value, tb)
+
+.. note::
+
+   Remember that the above is implemented for you when you use
+   :class:`sprocketstracing.tracing.RequestHandlerMixin`.  If you
+   want to roll your own, then that is close to what you need to do.
+
+This is all that you need for the most basic of tracing.  Your request
+is registered and sent to the tracing implementation when it finishes.
+You can use :func:`opentracing.start_child_span` to start a new child
+span that tracks whatever operation you are interested in:
+
+.. code-block:: python
+
+   class RequestHandlerMixin(web.RequestHandler):
+
+       def get(self):
+           with opentracing.start_child_span(self.span, 'some-operation'):
+               # do stuff ... the context manager exit will handle tracing
+
+That's about it for the basic usage.  Take a look at the examples in
+full for more examples.

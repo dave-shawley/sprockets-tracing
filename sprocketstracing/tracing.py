@@ -31,6 +31,12 @@ class SpanContext(object):
     """
     Identifies a specific span.
 
+    :keyword str trace_id: optional trace identifier
+    :keyword str span_id: optional span identifier
+    :keyword bool sampled: should this span be sampled?
+    :keyword list parents: optional list of parent spans.  List elements
+        will be converted into :class:`.SpanContext` elements.
+
     Instances of this class contain the information to identify a
     :class:`.Span` in an immutable way.  They are used to form references
     to other spans whether you have access to the :class:`.Span` instance

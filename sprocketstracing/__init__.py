@@ -14,11 +14,11 @@ def install(application, io_loop):
 
     This function initializes the Open Tracing implementation using
     the configuration stored in ``application.settings['opentracing']``,
-    creates a new :class:`Tracer` instance configured appropriately,
-    and spawns a reporter on the IO loop.  The :class:`Tracer` instance
-    is stored as the ``opentracing`` attribute on ``application``
-    (via :func:`setattr`) though you should access it via the
-    ``opentracing.tracer`` global.
+    creates a new :class:`~sprocketstracing.tracing.Tracer` instance
+    configured appropriately, and spawns a reporter on the IO loop.  The
+    :class:`~sprocketstracing.tracing.Tracer` instance is stored as
+    the ``opentracing`` attribute on ``application`` (via :func:`setattr`)
+    though you should access it via the :data:`opentracing.tracer` global.
 
     """
     from sprocketstracing import reporting, tracing

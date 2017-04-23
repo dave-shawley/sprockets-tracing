@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# vim: set ts=2 sw=2 sts=2 et:
+
+if test -e /var/run/docker.sock
+then
+  DOCKER_IP=127.0.0.1
+fi
+
+if test -z "$DOCKER_IP"
+then
+  echo "Docker host is not available, please install docker"
+  echo "from https://www.docker.com/community-edition#/download"
+  exit 69
+fi
+
+test -n "$SHELLDEBUG" && set -x
+set -e
+
+if test "$1" != 'shellinit'
+then
+  docker-compose down --remove-orphans --volumes
+  docker-compose up -d zipkin
+fi
+
+test -d "build" || mkdir "build"
+cat>build/test-environment<<EOF
+export ZIPKIN_URL=http://$DOCKER_IP:$(docker-compose port zipkin 9411 | cut -d: -f2)/api/v1
+EOF

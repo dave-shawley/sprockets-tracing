@@ -4,4 +4,5 @@
 
    examples
    api
+   dev
    history

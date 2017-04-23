@@ -11,21 +11,18 @@ _reporter_factories = {}
 
 
 @gen.coroutine
-def report_spans(span_queue, **kwargs):
+def report_spans(reporter, span_queue):
     """
     Report spans out-of-band.
 
+    :param reporter: the reporter to use
     :param tornado.queues.Queue span_queue: queue to consume spans from.
 
     This co-routine consumes spans from the `span_queue` and reports them
     to the aggregation endpoint.
 
     """
-    report_format = kwargs['report_format']
-    del kwargs['report_format']
-
     logger = logging.getLogger('sprocketstracing.report_spans')
-    reporter = get_reporter(report_format, **kwargs)
     logger.info('reporting spans using %s', reporter)
     while True:
         try:
@@ -44,19 +41,19 @@ def report_spans(span_queue, **kwargs):
             span_queue.task_done()
 
 
-def get_reporter(name, *args, **kwargs):
+def get_reporter(*args, **kwargs):
     """
     Create a reporter instance.
 
-    :param str name: name that the reporter type was registered with
-        when calling :func:`.add_reporter`.
+    :param str report_format: name that the reporter type was registered
+        with when calling :func:`.add_reporter`.
     :param args: positional parameters to pass to the reporter factory.
     :param kwargs: keyword parameterws to pass to the reporter factory.
     :return: a new reporter instance.
     :rtype: NullReporter
 
     """
-    factory = _reporter_factories.get(name, NullReporter)
+    factory = _reporter_factories[kwargs.get('report_format', 'null')]
     return factory(*args, **kwargs)
 
 

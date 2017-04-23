@@ -57,6 +57,7 @@ def make_app():
                                        'propagation_syntax': 'zipkin'},
                           debug=True)
     sprocketstracing.install(app, iol)
+    return app
 
 
 def run():

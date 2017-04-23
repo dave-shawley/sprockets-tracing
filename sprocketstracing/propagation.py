@@ -7,10 +7,10 @@ _propagation_syntaxes = {}
 def get_syntax(name):
     """
     Retrieve a syntax by name.
-    
+
     :param str name: name of the syntax to retrieve
     :rtype: PropagationSyntax
-    
+
     """
     return _propagation_syntaxes.get(name, PropagationSyntax)()
 
@@ -18,7 +18,7 @@ def get_syntax(name):
 def add_syntax(name, syntax_factory):
     """
     Add a new propagation syntax class.
-    
+
     :param str name: name of the syntax to register
     :param syntax_factory: function to call to create syntax handler
 
@@ -29,8 +29,8 @@ def add_syntax(name, syntax_factory):
 class PropagationSyntax(object):
 
     """
-    Logic to get spans into and out of a `carrier`. 
-    
+    Logic to get spans into and out of a `carrier`.
+
     Sub-class this class to implement a new way to pass contextual
     information between traced processes.  Then register it with
     :func:`~sprocketstracing.propagation.add_syntax` so that it is
@@ -39,20 +39,20 @@ class PropagationSyntax(object):
     :class:`~sprocketstracing.tracing.SpanContext` instance from
     the carrier.  Similarly, spans are propagated in out-going
     requests using the :meth:`.inject` method instead.
-    
+
     The key to injecting and extracting from a generic *carrier*
     object is the use of a format specifier.  The implementation
     is explicitly told how to interact with the carrier using the
     specifier.  The following specifiers are defined by the
     `opentracing standard <http://opentracing.io>`_:
-    
+
     - :data:`opentracing.Format.BINARY`
     - :data:`opentracing.Format.TEXT_MAP`
     - :data:`opentracing.Format.HTTP_HEADERS`
-    
+
     If you try to manipulate a *carrier* using an unsupported value,
     then the method will raise :exc:`opentracing.UnsupportedFormatException`.
-    
+
     """
 
     def inject(self, span_context, format_, carrier):
@@ -87,7 +87,7 @@ class PropagationSyntax(object):
 
         The `format_` value is required to be a value from
         :class:`opentracing.Format` namespace.
-        
+
         """
         raise opentracing.UnsupportedFormatException(
             '{} does not support {}'.format(self.__class__.__name__,
@@ -98,22 +98,22 @@ class B3PropagationSyntax(PropagationSyntax):
 
     """
     Implements span propagation for `Zipkin <http://zipkin.io>`_.
-    
+
     Currently only HTTP header propagation is supported.
-    
+
     """
 
     def inject(self, span_context, format_, carrier):
         """
         Inject span details using Zipkin's mechanisms.
-        
-        :param sprocketstracing.tracing.SpanContext span_context: 
+
+        :param sprocketstracing.tracing.SpanContext span_context:
             the context to inject into the carrier
         :param str format_: controls how the span is injected into
             the carrier.  More specifically, this tells us how to
             inject values into the carrier (e.g., using ``__setitem__``).
         :param carrier:  carrier instance to inject the span details into.
-        
+
         See `HTTP Propagation <https://tinyurl.com/mfxqypm>`_ in the
         openzipkin documentation on how HTTP propagation is designed
         to work.

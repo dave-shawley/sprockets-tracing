@@ -1,9 +1,5 @@
 import binascii
 import os
-try:
-    from unittest import mock
-except ImportError:
-    import mock
 
 from tornado import httputil
 import opentracing

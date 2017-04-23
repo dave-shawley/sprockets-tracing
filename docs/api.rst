@@ -25,10 +25,20 @@ Request Handlers
 
 Span Reporting
 --------------
+.. autofunction:: sprocketstracing.reporting.get_reporter
+
+.. autofunction:: sprocketstracing.reporting.add_reporter
+
 .. autofunction:: sprocketstracing.reporting.report_spans
 
-Supported Propagation Methods
------------------------------
+.. autoclass:: sprocketstracing.reporting.NullReporter
+   :members:
+
+.. autoclass:: sprocketstracing.reporting.ZipkinReporter
+   :members:
+
+Span Propagation
+----------------
 .. autofunction:: sprocketstracing.propagation.get_syntax
 
 .. autofunction:: sprocketstracing.propagation.add_syntax

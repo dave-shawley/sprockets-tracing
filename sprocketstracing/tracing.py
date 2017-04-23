@@ -1,7 +1,9 @@
 import binascii
+import logging
 import os
+import time
 
-from tornado import web
+from tornado import concurrent, gen, httputil, web
 import opentracing
 
 import sprocketstracing.propagation
@@ -21,9 +23,82 @@ class RequestHandlerMixin(web.RequestHandler):
     """
 
     def __init__(self, *args, **kwargs):
+        # NB - these needs to be set BEFORE calling super.__init__ since
+        # super.__init__ will call set_default_headers() amnd initialize()
+        self.span = None
+        self.opentracing_options = {}
         super(RequestHandlerMixin, self).__init__(*args, **kwargs)
-        if not hasattr(self, 'opentracing_options'):
-            self.opentracing_options = {}
+
+    @gen.coroutine
+    def prepare(self):
+        maybe_future = super(RequestHandlerMixin, self).prepare()
+        if concurrent.is_future(maybe_future):
+            yield maybe_future
+
+        logger = logging.getLogger('sprocketstracing.RequestHandlerMixin')
+        try:
+            parent_context = opentracing.tracer.extract(
+                opentracing.Format.HTTP_HEADERS, self.request.headers)
+
+        except opentracing.UnsupportedFormatException as exc:
+            logger.warning('failed to extract context - %r', exc)
+
+        else:
+            opts = self.opentracing_options.copy()
+            opts['start_time'] = time.time()
+            if parent_context:
+                opts['child_of'] = parent_context
+            opts.setdefault('tags', {})
+            opts['tags'].update({
+                'span.kind': 'server',
+                'http.method': self.request.method,
+                'http.url': '{}://{}{}'.format(self.request.protocol,
+                                               self.request.host,
+                                               self.request.uri),
+                'http.version': self.request.version,
+                'peer.address': self.request.remote_ip,
+            })
+            self.span = opentracing.tracer.start_span(**opts)
+            self.span.context.service_name = \
+                self.application.settings['opentracing']['service_name']
+
+            port = None
+            if self.request.host.startswith('['):  # IPv6 literal
+                idx = self.request.host.find(']')
+                addr = self.request.host[1:idx]
+                if self.request.host[idx + 1:].startswith(':'):
+                    port = self.request.host[idx + 2:]
+            else:
+                addr, _, port = self.request.host.rpartition(':')
+
+            if port:
+                port = int(port)
+            elif self.request.protocol == 'http':
+                port = 80
+            elif self.request.protocol == 'https':
+                port = 443
+            self.span.context.service_endpoint = addr, port
+
+            self.__set_tracing_headers()
+
+    def on_finish(self):
+        if self.span:
+            self.span.set_tag('http.status_code', self.get_status())
+            self.span.finish(end_time=time.time())
+        super(RequestHandlerMixin, self).on_finish()
+
+    def set_default_headers(self):  # called during __init__ and on error
+        super(RequestHandlerMixin, self).set_default_headers()
+        self.__set_tracing_headers()
+
+    def __set_tracing_headers(self):
+        if self.span:
+            headers = httputil.HTTPHeaders()
+            opentracing.tracer.inject(self.span.context,
+                                      opentracing.Format.HTTP_HEADERS,
+                                      headers)
+            for name, value in headers.items():
+                self.set_header(name, value)
 
 
 class SpanContext(object):
@@ -63,6 +138,8 @@ class SpanContext(object):
         self._span_id = kwargs.get('span_id')
         self._sampled = kwargs.get('sampled')
         self._baggage = kwargs.get('baggage', {})
+        self._service_name = kwargs.get('service_name')
+        self._service_endpoint = kwargs.get('service_endpoint')
         self._parents = []
         for parent in kwargs.get('parents', []):
             if isinstance(parent, SpanContext):
@@ -135,14 +212,52 @@ class SpanContext(object):
     def baggage(self):
         return self._baggage.copy()
 
+    # Non-standard methods
+
     def __bool__(self):
         """Is this context valid?"""
         return (self.sampled or len(self.parents) > 0 or
                 (self._trace_id is not None and self._span_id is not None))
 
-    def __iter__(self):
-        """Iterate over the user-specified baggage items."""
-        return iter(self._baggage.items())
+    @property
+    def service_endpoint(self):
+        """
+        The endpoint associated with this span.
+
+        :return: the endpoint as a :class:`tuple` of address and port
+            number.
+        :rtype: tuple
+
+        """
+        if self._service_endpoint:
+            return self._service_endpoint
+        for parent in self.parents:
+            if parent._service_endpoint:
+                return parent._service_endpoint
+        for parent in self.parents:
+            endpoint = parent.service_endpoint
+            if endpoint:
+                return endpoint
+
+    @service_endpoint.setter
+    def service_endpoint(self, new_value):
+        self._service_endpoint = tuple(new_value)
+
+    @property
+    def service_name(self):
+        if self._service_name:
+            return self._service_name
+        for parent in self.parents:
+            if parent._service_name:
+                return parent._service_name
+        for parent in self.parents:
+            name = parent.service_name
+            if name:
+                return name
+
+    @service_name.setter
+    def service_name(self, new_value):
+        self._service_name = new_value
 
 
 class Span(object):
@@ -171,6 +286,9 @@ class Span(object):
         super(Span, self).__init__()
         self.operation_name = span_name
         self._context = context
+        self._start_time = kwargs.get('start_time', time.time())
+        self._end_time = None
+        self._tags = kwargs.get('tags', {})
 
     @property
     def context(self):
@@ -214,6 +332,9 @@ class Span(object):
         that calling any method after ``finish`` has undefined results.
 
         """
+        if self._end_time is None:
+            self._end_time = end_time or time.time()
+            self.tracer.complete_span(self)
 
     def set_tag(self, tag, value):
         """
@@ -228,6 +349,7 @@ class Span(object):
         same `tag`.
 
         """
+        self._tags[tag] = value
 
     def __enter__(self):
         return self
@@ -250,6 +372,29 @@ class Span(object):
         """Manipulate the context's sampled property."""
         self.context.sampled = on_or_off
 
+    @property
+    def start_time(self):
+        """Return the second since the Epoch at which this span started."""
+        return self._start_time
+
+    @property
+    def duration(self):
+        """Return the duration of this span from start to finish."""
+        if self._end_time:
+            return self._end_time - self._start_time
+        return None
+
+    def get_tag(self, key, default=None):
+        """
+        Retrieve the value for the specified tag.
+
+        :param str key: key of the tag to retrieve
+        :param default: value to return if tag is not set
+        :return: the tag's value
+
+        """
+        return self._tags.get(key, default)
+
 
 class Tracer(object):
 
@@ -270,7 +415,9 @@ class Tracer(object):
     """
 
     def __init__(self, span_queue, **kwargs):
+        self.logger = logging.getLogger('sprocketstracing.Tracer')
         self.propagation_syntax = kwargs['propagation_syntax']
+        self.span_queue = span_queue
 
     def start_span(self, operation_name, **kwargs):
         """
@@ -334,6 +481,8 @@ class Tracer(object):
         kwargs = propagator.extract(format_, carrier)
         return SpanContext(**kwargs)
 
+    # Non-standard methods
+
     def stop(self):
         """
         Terminate the tracer and reporting layer,
@@ -348,3 +497,22 @@ class Tracer(object):
         :rtype: tornado.concurrent.Future
 
         """
+        if self.span_queue is not None:
+            self.logger.info('joining span queue')
+            span_queue, self.span_queue = self.span_queue, None
+            return span_queue.join()
+        self.logger.warning('span queue is None, is a shutdown already '
+                            'in progress?')
+
+    def complete_span(self, span):
+        """
+        Called when a span is finished.
+
+        :param .Span span: the span that has completed
+
+        This is where we pass the completed span off to the running
+        reporter so that it can be reported upstream.
+
+        """
+        if self.span_queue is not None:
+            self.span_queue.put_nowait(span)

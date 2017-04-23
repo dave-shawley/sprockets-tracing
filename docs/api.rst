@@ -43,6 +43,9 @@ Span Propagation
 
 .. autofunction:: sprocketstracing.propagation.add_syntax
 
+.. autoclass:: sprocketstracing.propagation.NoPropagation
+   :members:
+
 .. autoclass:: sprocketstracing.propagation.PropagationSyntax
    :members:
 

@@ -26,8 +26,8 @@ def install(application, io_loop):
     import tornado.queues
 
     span_queue = tornado.queues.Queue()
-    settings = application.settings.get('opentracing', {})
-    tracer = tracing.Tracer(span_queue, **settings)
+    application.settings.setdefault('opentracing', {})
+    tracer = tracing.Tracer(span_queue, **application.settings['opentracing'])
     opentracing.tracer = tracer
     setattr(application, 'opentracing', tracer)
     io_loop.spawn_callback(reporting.report_spans, span_queue, **settings)

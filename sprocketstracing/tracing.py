@@ -416,7 +416,7 @@ class Tracer(object):
 
     def __init__(self, span_queue, **kwargs):
         self.logger = logging.getLogger('sprocketstracing.Tracer')
-        self.propagation_syntax = kwargs['propagation_syntax']
+        self.propagation_syntax = kwargs.get('propagation_syntax', 'none')
         self.span_queue = span_queue
 
     def start_span(self, operation_name, **kwargs):

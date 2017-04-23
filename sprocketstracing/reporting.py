@@ -84,6 +84,9 @@ class NullReporter(object):
 
     """
 
+    def __init__(self, *args, **kwargs):
+        super(NullReporter, self).__init__()
+
     @gen.coroutine
     def process_span(self, span):
         """

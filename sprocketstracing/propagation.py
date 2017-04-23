@@ -82,6 +82,8 @@ class PropagationSyntax(object):
         :param str format_: the format of the carrier.  This controls which
             operations are called on the carrier.
         :param carrier: the object to extract the context's identifiers from.
+        :return: the span detail as a :class:`dict`.
+        :rtype: dict
 
         :raises: opentracing.UnsupportedFormatException
 
@@ -92,6 +94,42 @@ class PropagationSyntax(object):
         raise opentracing.UnsupportedFormatException(
             '{} does not support {}'.format(self.__class__.__name__,
                                             format_))
+
+
+class NoPropagation(PropagationSyntax):
+
+    """
+    Disables propagation of spans between request and response.
+
+    This is the default propagation mode.
+
+    """
+
+    def inject(self, span_context, format_, carrier):
+        """
+        Does nothing.
+
+        :param sprocketstracing.tracing.SpanContext span_context:
+            the context to inject into `carrier`
+        :param str format_: the format of the carrier.  This controls
+            which operations are available for interacting with `carrier`.
+        :param carrier: the object to inject the context's identifiers into.
+
+        """
+        pass
+
+    def extract(self, format_, carrier):
+        """
+        Ignore the carrier and return an empty dict.
+
+        :param str format_: the format of the carrier.  This controls which
+            operations are called on the carrier.
+        :param carrier: the object to extract the context's identifiers from.
+        :return: always returns an empty :class:`dict`
+        :rtype: dict
+
+        """
+        return {}
 
 
 class B3PropagationSyntax(PropagationSyntax):
@@ -191,3 +229,5 @@ class B3PropagationSyntax(PropagationSyntax):
 
 add_syntax('b3', B3PropagationSyntax)
 add_syntax('zipkin', B3PropagationSyntax)
+add_syntax('null', NoPropagation)
+add_syntax('none', NoPropagation)

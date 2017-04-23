@@ -1,10 +1,9 @@
-import unittest
 try:
     from unittest import mock
 except ImportError:
     import mock
 
-from tornado import web
+from tornado import concurrent, testing, web
 import opentracing
 
 import sprocketstracing.reporting
@@ -55,35 +54,104 @@ class InstallationTests(tests.helpers.SprocketsTracingTestCase):
                 **self.settings)
 
 
-class ShutdownTests(unittest.TestCase):
+class ShutdownTests(testing.AsyncTestCase):
 
     def setUp(self):
         super(ShutdownTests, self).setUp()
         self.saved_tracer = opentracing.tracer
-        self.application = web.Application(
-            [], opentracing={'propagation_syntax': 'zipkin'})
-        self.io_loop = mock.Mock()
+
+        self.application = web.Application([])
+
+        sprocketstracing.install(self.application, self.io_loop)
+        state = self.application.settings['opentracing']['state']
+
+        self.stop_future = concurrent.Future()
+        self.tracer = state['tracer']
+        self.tracer.stop = mock.Mock(return_value=self.stop_future)
+
+        self.flush_future = concurrent.Future()
+        self.reporter = state['reporter']
+        self.reporter.flush = mock.Mock(return_value=self.flush_future)
 
     def tearDown(self):
         super(ShutdownTests, self).tearDown()
         opentracing.tracer = self.saved_tracer
 
     def test_that_shutdown_stops_tracer(self):
-        tracer = mock.Mock()
-        opentracing.tracer = tracer
-        sprocketstracing.shutdown(self.application)
-        tracer.stop.assert_called_once_with()
+        self.stop_future.set_result(None)
+        self.flush_future.set_result(None)
 
-    def test_that_shutdown_returns_future_from_stop(self):
-        tracer = mock.Mock()
-        opentracing.tracer = tracer
-        result = sprocketstracing.shutdown(self.application)
-        self.assertIs(result, tracer.stop.return_value)
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.tracer.stop.assert_called_once_with()
+
+    def test_that_shutdown_stops_tracer_without_reporter(self):
+        del self.application.settings['opentracing']['state']['reporter']
+        self.stop_future.set_result(None)
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.tracer.stop.assert_called_once_with()
+
+    def test_that_shutdown_flushes_reporter(self):
+        self.stop_future.set_result(None)
+        self.flush_future.set_result(None)
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.reporter.flush.assert_called_once_with()
+
+    def test_that_shutdown_flushes_reporter_when_tracer_fails(self):
+        self.stop_future.set_exception(RuntimeError())
+        self.flush_future.set_result(None)
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.reporter.flush.assert_called_once_with()
+
+    def test_that_shutdown_flushes_reporter_without_tracer(self):
+        del self.application.settings['opentracing']['state']['tracer']
+        self.flush_future.set_result(None)
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.reporter.flush.assert_called_once_with()
+
+    def test_that_shutdown_finishes_when_tracer_and_reporter_fail(self):
+        self.stop_future.set_exception(RuntimeError())
+        self.flush_future.set_exception(RuntimeError())
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+        self.tracer.stop.assert_called_once_with()
+        self.reporter.flush.assert_called_once_with()
 
     def test_that_shutdown_resets_opentracing_tracer(self):
-        sprocketstracing.install(self.application, self.io_loop)
-        tracer = opentracing.tracer
+        self.assertIs(opentracing.tracer, self.tracer)
 
-        sprocketstracing.shutdown(self.application)
-        self.assertIsNot(opentracing.tracer, tracer)
+        self.stop_future.set_result(None)
+        self.flush_future.set_result(None)
+
+        future = sprocketstracing.shutdown(self.application)
+        self.io_loop.add_future(future, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        self.assertIsNot(opentracing.tracer, self.tracer)
         self.assertIs(self.application.opentracing, opentracing.tracer)
+
+    def test_that_shutdown_runs_without_state(self):
+        self.application.settings['opentracing'].pop('state')
+        maybe_future = sprocketstracing.shutdown(self.application)
+        self.assertIsNone(maybe_future)
+
+    def test_that_shutdown_finishes_without_tracer_or_reporter(self):
+        self.application.settings['opentracing']['state'].pop('reporter')
+        self.application.settings['opentracing']['state'].pop('tracer')
+        maybe_future = sprocketstracing.shutdown(self.application)
+        self.assertIsNone(maybe_future)

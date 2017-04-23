@@ -1,3 +1,6 @@
+import logging
+
+
 version_info = (0, 0, 0)
 version = '.'.join(str(v) for v in version_info)
 
@@ -33,6 +36,12 @@ def install(application, io_loop):
     setattr(application, 'opentracing', tracer)
     io_loop.spawn_callback(reporting.report_spans, reporter, span_queue)
 
+    application.settings['opentracing']['state'] = {
+        'reporter': reporter,
+        'span_queue': span_queue,
+        'tracer': tracer,
+    }
+
 
 def shutdown(application):
     """
@@ -46,9 +55,51 @@ def shutdown(application):
 
     """
     import opentracing
+    import tornado.concurrent
+    import tornado.ioloop
 
-    if not isinstance(opentracing.tracer, opentracing.Tracer):
-        future = opentracing.tracer.stop()
-        opentracing.tracer = opentracing.Tracer()  # install the no-op tracer
-        setattr(application, 'opentracing', opentracing.tracer)
-        return future
+    logger = logging.getLogger('sprocketstracing.shutdown')
+    state = application.settings.get('opentracing', {}).get('state')
+    if state:
+        reporter = state.get('reporter')
+        tracer = state.get('tracer')
+        iol = tornado.ioloop.IOLoop.current()
+        future = tornado.concurrent.TracebackFuture()
+
+        def reporter_flushed(f):
+            logger.info('shutdown of tracing layer is complete')
+            if f.exception():
+                logger.warning('exception while flushing reporter - %r',
+                               f.exception())
+            application.settings['opentracing'].pop('state', None)
+            future.set_result(None)
+
+        def tracer_stopped(f):
+            if f.exception():
+                logger.warning('exception while stopping tracer - %r',
+                               f.exception())
+            if reporter:
+                logger.info('flushing reporter')
+                iol.add_future(reporter.flush(), reporter_flushed)
+            else:
+                future.set_result(None)
+
+        if state.get('tracer'):
+            logger.info('stopping tracer, reporter will be flushed and '
+                        'stopped once the tracer is shut down')
+            iol.add_future(tracer.stop(), tracer_stopped)
+
+            # install the no-op tracer
+            opentracing.tracer = opentracing.Tracer()
+            setattr(application, 'opentracing', opentracing.tracer)
+
+            return future
+
+        elif reporter:
+            logger.info('flushing reporter')
+            iol.add_future(reporter.flush(), reporter_flushed)
+
+            return future
+
+    else:
+        logger.info('tracing was not initialized, nothing to do')

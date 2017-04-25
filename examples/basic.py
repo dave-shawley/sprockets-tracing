@@ -26,7 +26,7 @@ class TimeHandler(tracing.RequestHandlerMixin, web.RequestHandler):
 
     def initialize(self):
         super(TimeHandler, self).initialize()
-        self.opentracing_options['operation_name'] = 'fetch-time'
+        self.tracing_operation = 'fetch-time'
 
     @gen.coroutine
     def get(self):
@@ -38,7 +38,7 @@ class TimeHandler(tracing.RequestHandlerMixin, web.RequestHandler):
         after_time = self.get_query_argument('sleep-after', 0)
         if after_time:
             yield gen.sleep(float(after_time))
-        response['end_time'] = datetime.datetime.now(UTC()).isoormat()
+        response['end_time'] = datetime.datetime.now(UTC()).isoformat()
         self.set_status(200)
         self.set_header('Content-Type', 'application/json; charset="utf8"')
         self.write(json.dumps(response).encode('utf-8'))
@@ -54,7 +54,7 @@ def make_app():
                           opentracing={'service_name': 'Father Time',
                                        'report_format': 'zipkin',
                                        'report_target': zipkin_url,
-                                       'propagation_syntax': 'zipkin'},
+                                       'propagation_syntax': 'b3'},
                           debug=True)
     sprocketstracing.install(app, iol)
     return app

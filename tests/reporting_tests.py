@@ -13,7 +13,7 @@ class SleepingHandler(tracing.RequestHandlerMixin, web.RequestHandler):
 
     def initialize(self):
         super(SleepingHandler, self).initialize()
-        self.opentracing_options['operation_name'] = 'sleep'
+        self.tracing_operation = 'sleep'
 
     @gen.coroutine
     def get(self):

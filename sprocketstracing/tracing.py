@@ -27,6 +27,7 @@ class RequestHandlerMixin(web.RequestHandler):
         # super.__init__ will call set_default_headers() amnd initialize()
         self.span = None
         self.opentracing_options = {}
+        self.__operation_name = None
         super(RequestHandlerMixin, self).__init__(*args, **kwargs)
 
     @gen.coroutine
@@ -36,6 +37,12 @@ class RequestHandlerMixin(web.RequestHandler):
             yield maybe_future
 
         logger = logging.getLogger('sprocketstracing.RequestHandlerMixin')
+        if self.__operation_name is None:
+            logger.warning('no operation name, tracing disabled. '
+                           'Did you forget to set tracing_operation?')
+            self.span = None
+            raise gen.Return()
+
         try:
             parent_context = opentracing.tracer.extract(
                 opentracing.Format.HTTP_HEADERS, self.request.headers)
@@ -45,6 +52,7 @@ class RequestHandlerMixin(web.RequestHandler):
 
         else:
             opts = self.opentracing_options.copy()
+            opts['operation_name'] = self.__operation_name
             opts['start_time'] = time.time()
             if parent_context:
                 opts['child_of'] = parent_context
@@ -80,6 +88,30 @@ class RequestHandlerMixin(web.RequestHandler):
             self.span.context.service_endpoint = addr, port
 
             self.__set_tracing_headers()
+
+    @property
+    def tracing_operation(self):
+        """
+        Retrieve the name of this operation in the tracing system.
+
+        :rtype: str
+
+        """
+        return self.__operation_name
+
+    @tracing_operation.setter
+    def tracing_operation(self, operation_name):
+        """
+        Set the name for this operation.
+
+        :param str operation_name: the name of the operation to report
+            to the tracing system.
+
+        This method MUST be called BEFORE calling ``super.prepare`` in
+        your implementation of :meth:`tornado.web.RequestHandler.prepare`.
+
+        """
+        self.__operation_name = operation_name
 
     def on_finish(self):
         if self.span:

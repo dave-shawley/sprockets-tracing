@@ -246,6 +246,11 @@ class SpanContext(object):
 
     # Non-standard methods
 
+    def __repr__(self):
+        return '<%s trace_id=%r span_id=%r sampled=%r>' % (
+            self.__class__.__name__, self.trace_id, self.span_id,
+            self.sampled)
+
     def __bool__(self):
         """Is this context valid?"""
         return (self.sampled or len(self.parents) > 0 or
@@ -426,6 +431,12 @@ class Span(object):
 
         """
         return self._tags.get(key, default)
+
+    def __repr__(self):
+        return '<%s %s trace_id=%r span_id=%r start_time=%r sampled=%r>' % (
+            self.__class__.__name__, self.operation_name,
+            self.context.trace_id, self.context.span_id,
+            self.start_time, self.context.sampled)
 
 
 class Tracer(object):

@@ -36,7 +36,11 @@ def report_spans(reporter, span_queue):
             raise exc
 
         try:
-            yield reporter.process_span(span)
+            if span.start_time:
+                yield reporter.process_span(span)
+            else:
+                logger.error('refusing to submit span without '
+                             'start time - %r', span)
         finally:
             span_queue.task_done()
 

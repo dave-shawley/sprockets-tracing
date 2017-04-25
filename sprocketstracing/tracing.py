@@ -318,7 +318,7 @@ class Span(object):
         super(Span, self).__init__()
         self.operation_name = span_name
         self._context = context
-        self._start_time = kwargs.get('start_time', time.time())
+        self._start_time = kwargs.get('start_time') or time.time()
         self._end_time = None
         self._tags = kwargs.get('tags', {})
 

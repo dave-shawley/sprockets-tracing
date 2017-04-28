@@ -96,7 +96,6 @@ class NullReporter(object):
         :param sprocketstracing.tracing.Span span: the span to report
 
         """
-        pass
 
     @gen.coroutine
     def flush(self):
@@ -123,6 +122,7 @@ class ZipkinReporter(NullReporter):
     """
 
     def __init__(self, *args, **kwargs):
+        super(ZipkinReporter, self).__init__()
         self.logger = logging.getLogger('sprocketstracing.ZipkinReporter')
         self.service_name = kwargs['service_name']
         report_target = kwargs.get('report_target',
@@ -160,13 +160,15 @@ class ZipkinReporter(NullReporter):
         """
         payload = self._generate_zipkin_span(span)
         if payload:
+            self.logger.debug('submitting span %r', span)
             request = httpclient.HTTPRequest(self.report_url, method='POST')
             request.headers['Content-Type'] = 'application/json; charset=UTF8'
             request.body = self.json_encoder.encode([payload]).encode('utf-8')
             self.logger.debug('submitting trace %r', request.body)
             response = yield self.http_client.fetch(request, raise_error=False)
             if response.code >= 400:
-                self.logger.error('failed to submit span - %r', response)
+                self.logger.error('failed to submit span %r - %r',
+                                  span, response)
 
     def _generate_zipkin_span(self, span):
         """
@@ -181,19 +183,35 @@ class ZipkinReporter(NullReporter):
         payload = ZipkinPayloadBuilder(span)
         start_micros = span.start_time * 1e6
         duration_micros = span.duration * 1e6
+        all_tags = set(pair[0] for pair in span.tags())
 
         def add_bin_if_tag_present(tag, annotation):
-            if span.get_tag(tag):
+            if tag in all_tags:
                 payload.add_binary_annotation(annotation, span.get_tag(tag))
 
         kind = span.get_tag('span.kind', 'client')
         if kind == 'server':
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
-            payload.add_binary_annotation('server-type', 'http')
-            payload.set_bin_annotation_from_tag('peer.address', 'ca')
-            payload.set_bin_annotation_from_tag('http.url', 'url')
-            payload.set_bin_annotation_from_tag('http.method', 'method')
+            payload.add_binary_annotation('server.type', 'http')
+            add_bin_if_tag_present('peer.address', 'ca')
+            add_bin_if_tag_present('http.url', 'http.url')
+            add_bin_if_tag_present('http.method', 'http.method')
+
+        elif kind == 'client':
+            payload.add_annotation('cs', start_micros)
+            payload.add_annotation('cr', start_micros + duration_micros)
+
+            endpoint_map = {'peer.service': 'serviceName',
+                            'peer.ipv4': 'ipv4',
+                            'peer.ipv6': 'ipv6',
+                            'peer.port': 'port'}
+            endpoint = {}
+            for tracing_name, zipkin_name in endpoint_map.items():
+                if span.get_tag(tracing_name):
+                    endpoint[zipkin_name] = span.get_tag(tracing_name)
+            if endpoint:
+                payload.add_binary_annotation('sa', endpoint=endpoint)
 
         else:
             return None
@@ -249,6 +267,9 @@ class ZipkinPayloadBuilder(object):
                         'traceId': span.context.trace_id,
                         'annotations': [],
                         'binaryAnnotations': []}
+
+        if span.context.parents:
+            self.payload['parentId'] = span.context.parents[0].span_id
 
     def as_dict(self):
         """
@@ -308,7 +329,7 @@ class ZipkinPayloadBuilder(object):
 
         """
         annotation = {'endpoint': endpoint or self.endpoint,
-                      'key': key, 'value': value}
+                      'key': key, 'value': str(value)}
         annotation.update(attributes)
         self.payload['binaryAnnotations'].append(annotation)
         return annotation

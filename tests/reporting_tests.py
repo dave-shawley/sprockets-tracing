@@ -73,7 +73,12 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             response = self.wait()
             if response.code == 200:
                 break
-            if response.code != 404:
+
+            if response.code == 404:
+                self.io_loop.add_future(gen.sleep(0.1),
+                                        lambda _: self.io_loop.stop())
+                self.wait()
+            else:
                 self.fail('unexpected response {}'.format(response.code))
 
         self.assertEqual(response.code, 200)
@@ -107,13 +112,43 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
 
         spans = self.retrieve_trace_by_id(result.headers['X-B3-TraceId'])
         self.assertIsNone(spans[0].get('parentId'))
-        expected = {'server-type': 'http',
-                    'url': 'http://{}:{}/sleep'.format('localhost',
-                                                       self.get_http_port()),
-                    'method': 'GET'}
+        expected = {'server.type': 'http',
+                    'http.url': 'http://{}:{}/sleep'.format(
+                        'localhost', self.get_http_port()),
+                    'http.method': 'GET'}
         for bin_annotation in spans[0]['binaryAnnotations']:
             if bin_annotation['key'] in expected:
                 self.assertEqual(bin_annotation['value'],
                                  expected[bin_annotation['key']])
                 del expected[bin_annotation['key']]
         self.assertEqual(len(expected), 0)
+
+    def test_that_client_span_is_reported(self):
+        with self.application.opentracing.start_span('client-test') as span:
+            # provide the context that our request handler provides
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = 'localhost', self.get_http_port()
+
+            # set up the span as a client call
+            span.set_tag('span.kind', 'client')
+            span.set_tag('peer.service', 'other-service')
+            span.set_tag('peer.ipv4', '127.0.0.1')
+            span.set_tag('peer.port', 1234)
+
+            # we need this to retrieve the reported span from zipkin
+            trace_id = span.context.trace_id
+
+        # let the reporter run
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        for bin_annotation in spans[0]['binaryAnnotations']:
+            if bin_annotation['key'] == 'sa':
+                self.assertEqual(bin_annotation['value'].lower(), 'true')
+                self.assertEqual(bin_annotation['endpoint']['serviceName'],
+                                 'other-service')
+                self.assertEqual(bin_annotation['endpoint']['ipv4'],
+                                 '127.0.0.1')
+                self.assertEqual(bin_annotation['endpoint']['port'], 1234)

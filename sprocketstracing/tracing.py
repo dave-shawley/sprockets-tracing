@@ -432,6 +432,15 @@ class Span(object):
         """
         return self._tags.get(key, default)
 
+    def tags(self):
+        """
+        Return an iterator over tag items.
+
+        :return: iterator that yields tag key + value pairs
+
+        """
+        return iter(self._tags.items())
+
     def __repr__(self):
         return '<%s %s trace_id=%r span_id=%r start_time=%r sampled=%r>' % (
             self.__class__.__name__, self.operation_name,

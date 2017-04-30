@@ -183,13 +183,15 @@ class ZipkinReporter(NullReporter):
         payload = ZipkinPayloadBuilder(span)
         start_micros = span.start_time * 1e6
         duration_micros = span.duration * 1e6
-        all_tags = set(pair[0] for pair in span.tags())
+        sentinel = object()
+        tags = dict(span.tags())
 
         def add_bin_if_tag_present(tag, annotation):
-            if tag in all_tags:
-                payload.add_binary_annotation(annotation, span.get_tag(tag))
+            value = tags.pop(tag, sentinel)
+            if value is not sentinel:
+                payload.add_binary_annotation(annotation, value)
 
-        kind = span.get_tag('span.kind', 'client')
+        kind = tags.pop('span.kind', 'client')
         if kind == 'server':
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
@@ -208,13 +210,17 @@ class ZipkinReporter(NullReporter):
                             'peer.port': 'port'}
             endpoint = {}
             for tracing_name, zipkin_name in endpoint_map.items():
-                if span.get_tag(tracing_name):
-                    endpoint[zipkin_name] = span.get_tag(tracing_name)
+                value = tags.pop(tracing_name, sentinel)
+                if value is not sentinel:
+                    endpoint[zipkin_name] = value
             if endpoint:
                 payload.add_binary_annotation('sa', endpoint=endpoint)
 
         else:
             return None
+
+        for name, value in tags.items():
+            payload.add_binary_annotation(name, value)
 
         return payload.as_dict()
 

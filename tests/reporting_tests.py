@@ -19,7 +19,8 @@ class SleepingHandler(tracing.RequestHandlerMixin, web.RequestHandler):
     def get(self):
         self.span.sampled = True
         if self.get_query_argument('sleep', None):
-            yield gen.sleep(float(self.get_query_argument('sleep')))
+            with self.application.opentracing.start_span('nap-time'):
+                yield gen.sleep(float(self.get_query_argument('sleep')))
         self.set_status(int(self.get_query_argument('status', 200)))
         self.finish()
 
@@ -152,3 +153,42 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
                 self.assertEqual(bin_annotation['endpoint']['ipv4'],
                                  '127.0.0.1')
                 self.assertEqual(bin_annotation['endpoint']['port'], 1234)
+
+        annotation_names = [annotation['key']
+                            for annotation in spans[0]['binaryAnnotations']]
+        self.assertNotIn('peer.service', annotation_names)
+        self.assertNotIn('peer.ipv4', annotation_names)
+        self.assertNotIn('peer.port', annotation_names)
+
+    def test_that_arbitrary_tags_are_reported(self):
+        tags = {'my-tag': 'whatever', 'numeric-tag': 12345}
+        with self.application.opentracing.start_span('server',
+                                                     tags=tags) as span:
+            # provide the context that our request handler provides
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = '::1', self.get_http_port()
+            
+            # mark this as a server span
+            span.set_tag('span.kind', 'server')
+
+            # we need this to retrieve the reported span from zipkin
+            trace_id = span.context.trace_id
+
+        # let the reporter run
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        expected_endpoint = {'serviceName': 'my-service',
+                             'port': self.get_http_port(),
+                             'ipv6': '::1'}
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        for bin_annotation in spans[0]['binaryAnnotations']:
+            if bin_annotation['key'] in tags:
+                self.assertEqual(bin_annotation['value'],
+                                 str(tags[bin_annotation['key']]))
+                self.assertEqual(bin_annotation['endpoint'], expected_endpoint)
+        
+        annotation_names = [annotation['key']
+                            for annotation in spans[0]['binaryAnnotations']]
+        self.assertNotIn('span.kind', annotation_names)

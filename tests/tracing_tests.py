@@ -76,3 +76,31 @@ class SpanContextTests(tests.helpers.SprocketsTracingTestCase):
                                              str_parent, bytes_parent])
         for p in child.parents:
             self.assertIsInstance(p, tracing.SpanContext)
+
+    def test_that_service_endpoint_is_inherited(self):
+        grand_parent = tracing.SpanContext()
+        grand_parent.service_endpoint = 'grandparent', 80
+        parent = tracing.SpanContext(parents=[grand_parent])
+        span = tracing.SpanContext(parents=[parent])
+
+        self.assertEqual(span.service_endpoint, grand_parent.service_endpoint)
+
+        parent.service_endpoint = 'parent', 80
+        self.assertEqual(span.service_endpoint, parent.service_endpoint)
+
+        span.service_endpoint = 'span', 80
+        self.assertEqual(span.service_endpoint, ('span', 80))
+
+    def test_that_service_name_is_inherited(self):
+        grand_parent = tracing.SpanContext()
+        grand_parent.service_name = 'grandparent'
+        parent = tracing.SpanContext(parents=[grand_parent])
+        span = tracing.SpanContext(parents=[parent])
+
+        self.assertEqual(span.service_name, grand_parent.service_name)
+
+        parent.service_name = 'parent'
+        self.assertEqual(span.service_name, parent.service_name)
+
+        span.service_name = 'span'
+        self.assertEqual(span.service_name, 'span')

@@ -143,6 +143,10 @@ class SpanContext(object):
     :keyword bool sampled: should this span be sampled?
     :keyword list parents: optional list of parent spans.  List elements
         will be converted into :class:`.SpanContext` elements.
+    :keyword str service_name: optional name of the service that
+        this span will be reported as.
+    :keyword tuple service_endpoint: host and port number that this
+        span was started by.
 
     Instances of this class contain the information to identify a
     :class:`.Span` in an immutable way.  They are used to form references
@@ -156,6 +160,14 @@ class SpanContext(object):
     is established using keyword parameters during construction.  The
     user-specified "baggage" is available by iterating over the context
     object itself (e.g., ``for name, value in context:``).
+
+    The two attributes that break the "immutability" aspect of a context
+    are the :attr:`.service_name` and :attr:`.service_endpoint`.  Both
+    are settable as keyword parameters however the
+    :meth:`opentracing.Tracer.start_span` method used to start the root
+    span does not allow for arbitrary keywords to be passed on to the
+    context.  Thus, the only option is to start the span and then set
+    the service name and endpoint after the fact.
 
     This class implements the ``SpanContext`` concept described in
     the Open Tracing API [#]_ .
@@ -265,6 +277,12 @@ class SpanContext(object):
             number.
         :rtype: tuple
 
+        The address portion of the endpoint can be a host name or
+        anything that is understood by the :mod:`ipaddress` module.
+        The service endpoint is inherited by child spans and *SHOULD
+        NOT* be modified on anything other than the root span since
+        all spans share the same endpoint.
+
         """
         if self._service_endpoint:
             return self._service_endpoint
@@ -282,6 +300,19 @@ class SpanContext(object):
 
     @property
     def service_name(self):
+        """
+        The name of the service associated with this span.
+
+        :return: the name of the service
+        :rtype: str
+
+        Similar to :attr:`service_endpoint`, this attribute is
+        inherited by child spans.  It *SHOULD NOT* be modified on a
+        child span since that would break the immutability aspect of
+        a span and the identity of a service does not change over
+        the course of request processing.
+
+        """
         if self._service_name:
             return self._service_name
         for parent in self.parents:

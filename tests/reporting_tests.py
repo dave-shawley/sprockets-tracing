@@ -121,6 +121,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             if bin_annotation['key'] in expected:
                 self.assertEqual(bin_annotation['value'],
                                  expected[bin_annotation['key']])
+                self.assertIsNone(bin_annotation.get('endpoint'))
                 del expected[bin_annotation['key']]
         self.assertEqual(len(expected), 0)
 
@@ -187,7 +188,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             if bin_annotation['key'] in tags:
                 self.assertEqual(bin_annotation['value'],
                                  str(tags[bin_annotation['key']]))
-                self.assertEqual(bin_annotation['endpoint'], expected_endpoint)
+                self.assertIsNone(bin_annotation.get('endpoint'))
         
         annotation_names = [annotation['key']
                             for annotation in spans[0]['binaryAnnotations']]

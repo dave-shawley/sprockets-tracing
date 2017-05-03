@@ -186,17 +186,18 @@ class ZipkinReporter(NullReporter):
         sentinel = object()
         tags = dict(span.tags())
 
-        def add_bin_if_tag_present(tag, annotation):
+        def add_bin_if_tag_present(tag, annotation, add_endpoint=False):
             value = tags.pop(tag, sentinel)
             if value is not sentinel:
-                payload.add_binary_annotation(annotation, value)
+                payload.add_binary_annotation(annotation, value,
+                                              add_endpoint=add_endpoint)
 
         kind = tags.pop('span.kind', 'client')
         if kind == 'server':
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
             payload.add_binary_annotation('server.type', 'http')
-            add_bin_if_tag_present('peer.address', 'ca')
+            add_bin_if_tag_present('peer.address', 'ca', add_endpoint=True)
             add_bin_if_tag_present('http.url', 'http.url')
             add_bin_if_tag_present('http.method', 'http.method')
 
@@ -286,16 +287,13 @@ class ZipkinPayloadBuilder(object):
         """
         return self.payload
 
-    def add_annotation(self, value, timestamp, endpoint=None, **attributes):
+    def add_annotation(self, value, timestamp, **attributes):
         """
         Add a simple annotation.
 
         :param str value: the annotation's formatted value.
         :param float timestamp: seconds since the Epoch timestamp of
             when the annotation was recorded.
-        :param dict endpoint: optional endpoint structure see the
-            Zipkin API [#]_ for structure details.  If unspecified,
-            the server's HTTP endpoint that received the request is used.
         :param attributes: additional attributes to append to the annotation.
         :return: the annotation after it is appended
         :rtype: dict
@@ -304,18 +302,15 @@ class ZipkinPayloadBuilder(object):
         it if necessary.  It has already been appended to the internal
         payload but the reference is modifiable.
 
-        .. [#] http://zipkin.io/zipkin-api/#/paths/%252Fspans/post
-
         """
-        annotation = {'endpoint': endpoint or self.endpoint,
-                      'value': value,
-                      'timestamp': int(timestamp)}
+        annotation = {'endpoint': self.endpoint,
+                      'value': value, 'timestamp': int(timestamp)}
         annotation.update(attributes)
         self.payload['annotations'].append(annotation)
         return annotation
 
     def add_binary_annotation(self, key, value=True, endpoint=None,
-                              **attributes):
+                              add_endpoint=False, **attributes):
         """
         Add a binary annotation.
 
@@ -323,8 +318,9 @@ class ZipkinPayloadBuilder(object):
         :param object value: value for the annotation.  If unspecified,
             the value :data:`True` is used by convention.
         :param dict endpoint: optional endpoint structure see the
-            Zipkin API [#]_ for structure details.  If unspecified, the
-            server's HTTP endpoint that received the request is used.
+            Zipkin API [#]_ for structure details.
+        :param bool add_endpoint: optional flag that tells the reporter
+            to insert the endpoint attribute if it is missing.
         :param attributes: additional attributes to append to the annotation.
         :return: the annotation after it is appended
         :rtype: dict
@@ -334,31 +330,14 @@ class ZipkinPayloadBuilder(object):
         payload but the reference is modifiable.
 
         """
-        annotation = {'endpoint': endpoint or self.endpoint,
-                      'key': key, 'value': str(value)}
+        annotation = {'key': key, 'value': str(value)}
+        if endpoint is not None:
+            annotation['endpoint'] = endpoint
+        elif add_endpoint:
+            annotation['endpoint'] = self.endpoint
         annotation.update(attributes)
         self.payload['binaryAnnotations'].append(annotation)
         return annotation
-
-    def set_bin_annotation_from_tag(self, tag_name, annotation_key,
-                                    **attributes):
-        """
-        Add a binary annotation from a span tag.
-
-        :param str tag_name: the span tag name to use as the source
-            of the annotation value
-        :param str annotation_key: binary annotation key to add
-        :param attributes: additional attributes to pass to the binary
-            annotation
-
-        If the tag does not exist, then no annotation is added.
-
-        """
-        sentinel = object()
-        if self.span.get_tag(tag_name, default=sentinel) is not sentinel:
-            self.add_binary_annotation(annotation_key,
-                                       self.span.get_tag(tag_name),
-                                       **attributes)
 
 
 add_reporter('null', NullReporter)

@@ -78,7 +78,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             if response.code == 404:
                 self.io_loop.add_future(gen.sleep(0.1),
                                         lambda _: self.io_loop.stop())
-                self.wait()
+                self.io_loop.start()
             else:
                 self.fail('unexpected response {}'.format(response.code))
 

@@ -193,7 +193,7 @@ class ZipkinReporter(NullReporter):
                                               add_endpoint=add_endpoint)
 
         kind = tags.pop('span.kind', 'client')
-        if kind == 'server':
+        if kind in ('server', 'periodic'):
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
             add_bin_if_tag_present('peer.address', 'ca', add_endpoint=True)

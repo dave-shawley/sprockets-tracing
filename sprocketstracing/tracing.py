@@ -610,5 +610,5 @@ class Tracer(object):
         reporter so that it can be reported upstream.
 
         """
-        if self.span_queue is not None:
+        if self.span_queue is not None and span.sampled:
             self.span_queue.put_nowait(span)

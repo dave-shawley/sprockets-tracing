@@ -130,6 +130,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             # provide the context that our request handler provides
             span.context.service_name = 'my-service'
             span.context.service_endpoint = 'localhost', self.get_http_port()
+            span.sampled = True
 
             # set up the span as a client call
             span.set_tag('span.kind', 'client')
@@ -168,6 +169,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             # provide the context that our request handler provides
             span.context.service_name = 'my-service'
             span.context.service_endpoint = '::1', self.get_http_port()
+            span.sampled = True
             
             # mark this as a server span
             span.set_tag('span.kind', 'server')

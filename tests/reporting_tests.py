@@ -113,17 +113,47 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
 
         spans = self.retrieve_trace_by_id(result.headers['X-B3-TraceId'])
         self.assertIsNone(spans[0].get('parentId'))
-        expected = {'server.type': 'http',
-                    'http.url': 'http://{}:{}/sleep'.format(
-                        'localhost', self.get_http_port()),
-                    'http.method': 'GET'}
+        expected = {'peer.address': '127.0.0.1'}
         for bin_annotation in spans[0]['binaryAnnotations']:
             if bin_annotation['key'] in expected:
                 self.assertEqual(bin_annotation['value'],
                                  expected[bin_annotation['key']])
                 self.assertIsNone(bin_annotation.get('endpoint'))
-                del expected[bin_annotation['key']]
-        self.assertEqual(len(expected), 0)
+
+    def test_that_http_request_details_are_reported(self):
+        result = self.fetch('/sleep')
+        self.assertEqual(result.code, 200)
+        self.assertIn('X-B3-TraceId', result.headers)
+
+        spans = self.retrieve_trace_by_id(result.headers['X-B3-TraceId'])
+        self.assertIsNone(spans[0].get('parentId'))
+        expected = {'server.type': 'http',
+                    'http.url': 'http://{}:{}/sleep'.format(
+                        'localhost', self.get_http_port()),
+                    'http.method': 'GET',
+                    'http.version': 'HTTP/1.1',
+                    'http.user_agent': ''}
+        for bin_annotation in spans[0]['binaryAnnotations']:
+            if bin_annotation['key'] in expected:
+                self.assertEqual(bin_annotation['value'],
+                                 expected[bin_annotation['key']])
+                self.assertIsNone(bin_annotation.get('endpoint'))
+        
+    def test_that_http_response_details_are_reported(self):
+        result = self.fetch('/sleep')
+        self.assertEqual(result.code, 200)
+        self.assertIn('X-B3-TraceId', result.headers)
+
+        spans = self.retrieve_trace_by_id(result.headers['X-B3-TraceId'])
+        self.assertIsNone(spans[0].get('parentId'))
+        expected = {'server.type': 'http',
+                    'http.status_code': '200',
+                    'http.reason': 'OK'}
+        for bin_annotation in spans[0]['binaryAnnotations']:
+            if bin_annotation['key'] in expected:
+                self.assertEqual(bin_annotation['value'],
+                                 expected[bin_annotation['key']])
+                self.assertIsNone(bin_annotation.get('endpoint'))
 
     def test_that_client_span_is_reported(self):
         with self.application.opentracing.start_span('client-test') as span:

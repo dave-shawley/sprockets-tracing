@@ -72,6 +72,7 @@ class RequestHandlerMixin(web.RequestHandler):
             opts.setdefault('tags', {})
             opts['tags'].update({
                 'span.kind': 'server',
+                'server.type': 'http',
                 'http.method': self.request.method,
                 'http.url': '{}://{}{}'.format(self.request.protocol,
                                                self.request.host,
@@ -79,6 +80,9 @@ class RequestHandlerMixin(web.RequestHandler):
                 'http.version': self.request.version,
                 'peer.address': self.request.remote_ip,
             })
+            if self.request.headers.get('User-Agent'):
+                opts['tags']['http.user_agent'] = self.request.headers[
+                    'User-Agent']
             self.span = opentracing.tracer.start_span(**opts)
             self.span.context.service_name = \
                 self.application.settings['opentracing']['service_name']
@@ -128,7 +132,13 @@ class RequestHandlerMixin(web.RequestHandler):
 
     def on_finish(self):
         if self.span:
-            self.span.set_tag('http.status_code', self.get_status())
+            status_code = self.get_status()
+            if hasattr(self, '_reason'):
+                reason = self._reason
+            else:
+                reason = httputil.responses.get(status_code, 'Unknown')
+            self.span.set_tag('http.reason', reason)
+            self.span.set_tag('http.status_code', status_code)
             self.span.finish(end_time=time.time())
         super(RequestHandlerMixin, self).on_finish()
 

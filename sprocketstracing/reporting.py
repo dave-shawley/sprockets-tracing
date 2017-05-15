@@ -196,10 +196,7 @@ class ZipkinReporter(NullReporter):
         if kind == 'server':
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
-            payload.add_binary_annotation('server.type', 'http')
             add_bin_if_tag_present('peer.address', 'ca', add_endpoint=True)
-            add_bin_if_tag_present('http.url', 'http.url')
-            add_bin_if_tag_present('http.method', 'http.method')
 
         elif kind == 'client':
             payload.add_annotation('cs', start_micros)

@@ -522,7 +522,7 @@ class Tracer(object):
         instances.
 
         """
-        if kwargs.get('child_of'):
+        if kwargs.get('child_of', None) is not None:
             context = SpanContext(parents=[kwargs.pop('child_of')])
         else:
             context = SpanContext()

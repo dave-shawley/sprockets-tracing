@@ -201,16 +201,7 @@ class ZipkinReporter(NullReporter):
         elif kind == 'client':
             payload.add_annotation('cs', start_micros)
             payload.add_annotation('cr', start_micros + duration_micros)
-
-            endpoint_map = {'peer.service': 'serviceName',
-                            'peer.ipv4': 'ipv4',
-                            'peer.ipv6': 'ipv6',
-                            'peer.port': 'port'}
-            endpoint = {}
-            for tracing_name, zipkin_name in endpoint_map.items():
-                value = tags.pop(tracing_name, sentinel)
-                if value is not sentinel:
-                    endpoint[zipkin_name] = value
+            tags, endpoint = self.extract_endpoint(**tags)
             if endpoint:
                 payload.add_binary_annotation('sa', endpoint=endpoint)
 
@@ -221,6 +212,48 @@ class ZipkinReporter(NullReporter):
             payload.add_binary_annotation(name, value)
 
         return payload.as_dict()
+
+    @staticmethod
+    def extract_endpoint(**tags):
+        sentinel = object()
+        tag_map = {'peer.service': 'serviceName',
+                   'peer.ipv4': 'ipv4',
+                   'peer.ipv6': 'ipv6',
+                   'peer.port': 'port'}
+        endpoint = {}
+        for tracing_name, zipkin_name in tag_map.items():
+            value = tags.pop(tracing_name, sentinel)
+            if value is not sentinel:
+                endpoint[zipkin_name] = value
+
+        if 'ipv4' not in endpoint and 'ipv6' not in endpoint:
+            name = tags.pop('peer.hostname', sentinel)
+            if name is not sentinel:
+                try:
+                    addr = ipaddress.ip_address(name)
+                    endpoint['ipv{}'.format(addr.version)] = str(addr)
+                except ValueError as error:  # not an IP literal
+                    family = (socket.AF_UNSPEC if socket.has_ipv6
+                              else socket.AF_INET)
+                    addrs = socket.getaddrinfo(name, 0, family=family,
+                                               type=socket.SOCK_STREAM,
+                                               proto=socket.IPPROTO_TCP,
+                                               flags=socket.AI_PASSIVE)
+                    if not addrs:
+                        raise error
+
+                    for family, socktype, proto, name, sa in addrs:
+                        if family == socket.AF_INET:
+                            endpoint['ipv4'] = sa[0]
+                        elif family == socket.AF_INET6:
+                            endpoint['ipv6'] = sa[0]
+
+        if 'port' not in endpoint:
+            endpoint['port'] = 0
+        if 'ipv4' not in endpoint and 'ipv6' not in endpoint:
+            endpoint = {}
+
+        return tags, endpoint
 
 
 class ZipkinPayloadBuilder(object):
@@ -244,27 +277,12 @@ class ZipkinPayloadBuilder(object):
     def __init__(self, span):
         self.span = span
         self.endpoint = {'serviceName': span.context.service_name}
-        endpoint = span.context.service_endpoint
-        if endpoint:
-            addr, port = endpoint
-            try:
-                addr = ipaddress.ip_address(addr)
-
-            except ValueError as error:  # not an IP literal
-                family = (socket.AF_UNSPEC if socket.has_ipv6
-                          else socket.AF_INET)
-                addrs = socket.getaddrinfo(addr, port,
-                                           family=family,
-                                           type=socket.SOCK_STREAM,
-                                           proto=socket.IPPROTO_TCP,
-                                           flags=socket.AI_PASSIVE)
-                if addrs:
-                    addr = ipaddress.ip_address(addrs[0][-1][0])
-                else:
-                    raise error
-
-            self.endpoint['ipv{}'.format(addr.version)] = str(addr)
-            self.endpoint['port'] = port
+        
+        if span.context.service_endpoint:
+            addr, port = span.context.service_endpoint
+            _, endpoint = ZipkinReporter.extract_endpoint(
+                **{'peer.hostname': addr, 'peer.port': port})
+            self.endpoint.update(endpoint)
 
         self.payload = {'name': span.operation_name.lower(),
                         'id': span.context.span_id,

@@ -21,7 +21,7 @@ class B3PropagationTests(tests.helpers.SprocketsTracingTestCase):
 
     @staticmethod
     def get_random_bits(bit_count):
-        return binascii.hexlify(os.urandom(bit_count // 8)).lower()
+        return binascii.hexlify(os.urandom(bit_count // 8)).lower().decode('ascii')
 
     def test_that_all_headers_are_extracted(self):
         headers = httputil.HTTPHeaders()

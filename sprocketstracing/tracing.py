@@ -9,6 +9,19 @@ import opentracing
 import sprocketstracing.propagation
 
 
+def get_random_bytes(num_bytes):
+    """
+    Get a number of random bytes as a hex string.
+    
+    :param int num_bytes: number of BYTES to return
+    :return: `num_bytes` random bytes formatted as a lower-case hex
+        string :class:`str`
+    :rtype: str
+    
+    """
+    return binascii.hexlify(os.urandom(num_bytes)).decode('ascii').lower()
+
+
 class RequestHandlerMixin(web.RequestHandler):
 
     """
@@ -209,7 +222,7 @@ class SpanContext(object):
             if self.parents:
                 self._trace_id = self.parents[0].trace_id
             else:
-                self._trace_id = binascii.hexlify(os.urandom(16))
+                self._trace_id = get_random_bytes(16)
         return self._trace_id
 
     @property
@@ -225,7 +238,7 @@ class SpanContext(object):
 
         """
         if self._span_id is None:
-            self._span_id = binascii.hexlify(os.urandom(8))
+            self._span_id = get_random_bytes(8)
         return self._span_id
 
     @property

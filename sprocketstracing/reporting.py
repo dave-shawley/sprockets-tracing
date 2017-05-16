@@ -1,4 +1,3 @@
-import ipaddress
 import json
 import logging
 import socket
@@ -41,6 +40,9 @@ def report_spans(reporter, span_queue):
             else:
                 logger.error('refusing to submit span without '
                              'start time - %r', span)
+        except Exception:
+            logger.exception('failed to process span %r', span)
+
         finally:
             span_queue.task_done()
 
@@ -231,24 +233,22 @@ class ZipkinReporter(NullReporter):
         if 'ipv4' not in endpoint and 'ipv6' not in endpoint:
             name = tags.pop('peer.hostname', sentinel)
             if name is not sentinel:
-                try:
-                    addr = ipaddress.ip_address(name)
-                    endpoint['ipv{}'.format(addr.version)] = str(addr)
-                except ValueError as error:  # not an IP literal
-                    family = (socket.AF_UNSPEC if socket.has_ipv6
-                              else socket.AF_INET)
-                    addrs = socket.getaddrinfo(name, 0, family=family,
-                                               type=socket.SOCK_STREAM,
-                                               proto=socket.IPPROTO_TCP,
-                                               flags=socket.AI_PASSIVE)
-                    if not addrs:
-                        raise error
-
-                    for family, socktype, proto, name, sa in addrs:
-                        if family == socket.AF_INET:
-                            endpoint['ipv4'] = sa[0]
-                        elif family == socket.AF_INET6:
-                            endpoint['ipv6'] = sa[0]
+                addrs = socket.getaddrinfo(name, 0,
+                                           family=socket.AF_UNSPEC,
+                                           type=socket.SOCK_STREAM,
+                                           proto=socket.IPPROTO_TCP,
+                                           flags=socket.AI_PASSIVE)
+                for family, socktype, proto, name, sa in addrs:
+                    if family == socket.AF_INET:
+                        endpoint['ipv4'] = sa[0]
+                    elif family == socket.AF_INET6:
+                        endpoint['ipv6'] = sa[0]
+                    else:  # pragma: no cover
+                        # AFAICT, python will never return anything other
+                        # than AF_INET and AF_INET6... at least the CPython
+                        # source will explicitly fail with "unknown address
+                        # family".  If we get anything else, then ignore it.
+                        pass
 
         if 'port' not in endpoint:
             endpoint['port'] = 0

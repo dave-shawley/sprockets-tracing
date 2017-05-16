@@ -272,3 +272,13 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         
         spans = self.retrieve_trace_by_id(trace_id, allow_404=True)
         self.assertIsNone(spans)
+
+    def test_that_malformed_ip_literals_are_not_reported(self):
+        with self.application.opentracing.start_span('malformed') as span:
+            span.context.service_endpoint = '256.256.256.256', 0
+            span.sampled = True
+            
+            trace_id = span.context.trace_id
+        
+        spans = self.retrieve_trace_by_id(trace_id, allow_404=True)
+        self.assertIsNone(spans)

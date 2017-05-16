@@ -206,6 +206,8 @@ class ZipkinReporter(NullReporter):
                 payload.add_binary_annotation('sa', endpoint=endpoint)
 
         else:
+            self.logger.warning('skipping %r, unhandled span.kind %s',
+                                span, kind)
             return None
 
         for name, value in tags.items():

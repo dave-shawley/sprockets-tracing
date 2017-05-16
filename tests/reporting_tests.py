@@ -59,7 +59,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         sprocketstracing.install(self.application, self.io_loop)
         return self.application
 
-    def retrieve_trace_by_id(self, trace_id):
+    def retrieve_trace_by_id(self, trace_id, allow_404=False):
         zipkin_url = os.environ['ZIPKIN_URL']
         if not zipkin_url.endswith('/'):
             zipkin_url += '/'
@@ -82,9 +82,13 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             else:
                 self.fail('unexpected response {}'.format(response.code))
 
-        self.assertEqual(response.code, 200)
+        if allow_404:
+            self.assertIn(response.code, (200, 404))
+        else:
+            self.assertEqual(response.code, 200)
 
-        return json.loads(response.body.decode('utf-8'))
+        if response.body:
+            return json.loads(response.body.decode('utf-8'))
 
     def test_that_simple_trace_is_reported(self):
         result = self.fetch('/sleep')
@@ -258,3 +262,13 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         keys = [annotation['value'] for annotation in spans[0]['annotations']]
         self.assertIn('cs', keys)
         self.assertIn('cr', keys)
+
+    def test_that_unknown_span_types_are_not_reported(self):
+        with self.application.opentracing.start_span('whatever') as span:
+            span.sampled = True
+            span.set_tag('span.kind', str(uuid.uuid4()))
+            
+            trace_id = span.context.trace_id
+        
+        spans = self.retrieve_trace_by_id(trace_id, allow_404=True)
+        self.assertIsNone(spans)

@@ -240,3 +240,21 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         keys = [annotation['value'] for annotation in spans[0]['annotations']]
         self.assertIn('sr', keys)
         self.assertIn('ss', keys)
+
+    def test_that_producer_spans_are_reported_as_client_spans(self):
+        with self.application.opentracing.start_span('producer') as span:
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = '127.0.0.1', 0
+            span.sampled = True
+            span.set_tag('span.kind', 'producer')
+        
+            trace_id = span.context.trace_id
+    
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+    
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        keys = [annotation['value'] for annotation in spans[0]['annotations']]
+        self.assertIn('cs', keys)
+        self.assertIn('cr', keys)

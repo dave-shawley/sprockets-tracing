@@ -198,7 +198,7 @@ class ZipkinReporter(NullReporter):
             payload.add_annotation('ss', start_micros + duration_micros)
             add_bin_if_tag_present('peer.address', 'ca', add_endpoint=True)
 
-        elif kind == 'client':
+        elif kind in ('client', 'producer'):
             payload.add_annotation('cs', start_micros)
             payload.add_annotation('cr', start_micros + duration_micros)
             tags, endpoint = self.extract_endpoint(**tags)

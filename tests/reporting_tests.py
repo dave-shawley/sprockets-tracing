@@ -2,9 +2,11 @@ from unittest import mock
 from urllib import parse
 import json
 import os
+import time
 import uuid
 
 from tornado import concurrent, gen, httpclient, testing, web
+import opentracing
 
 from sprocketstracing import reporting, tracing
 import sprocketstracing
@@ -60,23 +62,23 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         sprocketstracing.install(self.application, self.io_loop)
         return self.application
 
-    def retrieve_trace_by_id(self, trace_id, allow_404=False):
+    def retrieve_trace_by_id(self, trace_id, allow_404=False, span_count=None):
         zipkin_url = os.environ['ZIPKIN_URL']
         if not zipkin_url.endswith('/'):
             zipkin_url += '/'
         url = parse.urljoin(zipkin_url,
                             'trace/{}'.format(parse.quote(trace_id)))
-        self.http_client.fetch(url, headers={'Accept': 'application/json'},
-                               callback=self.stop)
-        response = self.wait()
+
+        spans = None
         for _ in range(0, 5):
             self.http_client.fetch(url, headers={'Accept': 'application/json'},
                                    callback=self.stop)
             response = self.wait()
             if response.code == 200:
-                break
-
-            if response.code == 404:
+                spans = json.loads(response.body.decode('utf-8'))
+                if span_count is None or len(spans) == span_count:
+                    break
+            elif response.code == 404:
                 self.io_loop.add_future(gen.sleep(0.1),
                                         lambda _: self.io_loop.stop())
                 self.io_loop.start()
@@ -88,8 +90,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         else:
             self.assertEqual(response.code, 200)
 
-        if response.body:
-            return json.loads(response.body.decode('utf-8'))
+        return spans
 
     def test_that_simple_trace_is_reported(self):
         result = self.fetch('/sleep')
@@ -315,3 +316,21 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         self.io_loop.start()
 
         self.assertEqual(len(client.fetch.call_args_list), 1)
+
+    def test_that_nested_spans_are_reported_properly(self):
+        with self.application.opentracing.start_span('outer') as span:
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = '127.0.0.1', self.get_http_port()
+            span.context.sampled = True
+            time.sleep(0.1)
+
+            with opentracing.start_child_span(span, 'inner'):
+                time.sleep(0.1)
+
+            trace_id = span.context.trace_id
+
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        spans = self.retrieve_trace_by_id(trace_id, span_count=2)
+        self.assertEqual(len(spans), 2)

@@ -12,12 +12,12 @@ import sprocketstracing.propagation
 def get_random_bytes(num_bytes):
     """
     Get a number of random bytes as a hex string.
-    
+
     :param int num_bytes: number of BYTES to return
     :return: `num_bytes` random bytes formatted as a lower-case hex
         string :class:`str`
     :rtype: str
-    
+
     """
     return binascii.hexlify(os.urandom(num_bytes)).decode('ascii').lower()
 
@@ -380,6 +380,8 @@ class Span(object):
         self._start_time = kwargs.get('start_time') or time.time()
         self._end_time = None
         self._tags = kwargs.get('tags', {})
+        if self._tags is None:  # opentracing.start_child_span does this
+            self._tags = {}
 
     @property
     def context(self):
@@ -496,10 +498,12 @@ class Span(object):
         return iter(self._tags.items())
 
     def __repr__(self):
-        return '<%s %s trace_id=%r span_id=%r start_time=%r sampled=%r>' % (
+        return ('<%s %s trace_id=%r span_id=%r start_time=%r sampled=%r'
+                ' parent=%r>') % (
             self.__class__.__name__, self.operation_name,
             self.context.trace_id, self.context.span_id,
-            self.start_time, self.context.sampled)
+            self.start_time, self.context.sampled,
+            self.context.parents[0] if self.context.parents else None)
 
 
 class Tracer(object):

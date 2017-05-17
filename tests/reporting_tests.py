@@ -1,11 +1,12 @@
+from unittest import mock
 from urllib import parse
 import json
 import os
 import uuid
 
-from tornado import gen, testing, web
+from tornado import concurrent, gen, httpclient, testing, web
 
-from sprocketstracing import tracing
+from sprocketstracing import reporting, tracing
 import sprocketstracing
 
 
@@ -142,7 +143,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
                 self.assertEqual(bin_annotation['value'],
                                  expected[bin_annotation['key']])
                 self.assertIsNone(bin_annotation.get('endpoint'))
-        
+
     def test_that_http_response_details_are_reported(self):
         result = self.fetch('/sleep')
         self.assertEqual(result.code, 200)
@@ -204,7 +205,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             span.context.service_name = 'my-service'
             span.context.service_endpoint = '::1', self.get_http_port()
             span.sampled = True
-            
+
             # mark this as a server span
             span.set_tag('span.kind', 'server')
 
@@ -222,7 +223,7 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
                 self.assertEqual(bin_annotation['value'],
                                  str(tags[bin_annotation['key']]))
                 self.assertIsNone(bin_annotation.get('endpoint'))
-        
+
         annotation_names = [annotation['key']
                             for annotation in spans[0]['binaryAnnotations']]
         self.assertNotIn('span.kind', annotation_names)
@@ -233,12 +234,12 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             span.context.service_endpoint = '127.0.0.1', self.get_http_port()
             span.sampled = True
             span.set_tag('span.kind', 'periodic')
-            
+
             trace_id = span.context.trace_id
-        
+
         self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
         self.io_loop.start()
-        
+
         spans = self.retrieve_trace_by_id(trace_id)
         self.assertEqual(len(spans), 1)
         keys = [annotation['value'] for annotation in spans[0]['annotations']]
@@ -251,12 +252,12 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             span.context.service_endpoint = '127.0.0.1', 0
             span.sampled = True
             span.set_tag('span.kind', 'producer')
-        
+
             trace_id = span.context.trace_id
-    
+
         self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
         self.io_loop.start()
-    
+
         spans = self.retrieve_trace_by_id(trace_id)
         self.assertEqual(len(spans), 1)
         keys = [annotation['value'] for annotation in spans[0]['annotations']]
@@ -267,9 +268,9 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         with self.application.opentracing.start_span('whatever') as span:
             span.sampled = True
             span.set_tag('span.kind', str(uuid.uuid4()))
-            
+
             trace_id = span.context.trace_id
-        
+
         spans = self.retrieve_trace_by_id(trace_id, allow_404=True)
         self.assertIsNone(spans)
 
@@ -277,8 +278,40 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         with self.application.opentracing.start_span('malformed') as span:
             span.context.service_endpoint = '256.256.256.256', 0
             span.sampled = True
-            
+
             trace_id = span.context.trace_id
-        
+
         spans = self.retrieve_trace_by_id(trace_id, allow_404=True)
         self.assertIsNone(spans)
+
+    def test_that_zipkin_reporter_adjusts_report_target(self):
+        reporter = reporting.ZipkinReporter(service_name='my-service',
+                                            report_target='http://127.0.0.1')
+        self.assertEqual(reporter.report_url, 'http://127.0.0.1/spans')
+
+        reporter = reporting.ZipkinReporter(service_name='my-service',
+                                            report_target='http://127.0.0.1/')
+        self.assertEqual(reporter.report_url, 'http://127.0.0.1/spans')
+
+    def test_that_zipkin_reporter_caches_http_client(self):
+        reporter = reporting.ZipkinReporter(service_name='my-service')
+        client = reporter.http_client
+        self.assertIs(reporter.http_client, client)
+
+    def test_that_zipkin_reporting_failures_are_swallowed(self):
+        response = httpclient.HTTPResponse(mock.Mock(), 400)
+        future = concurrent.Future()
+        future.set_result(response)
+        reporter = self.application.settings['opentracing']['state']['reporter']
+        client = reporter.http_client
+        client.fetch = mock.Mock(return_value=future)
+
+        with self.application.opentracing.start_span('some-span') as span:
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = '::1', 0
+            span.sampled = True
+
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        self.assertEqual(len(client.fetch.call_args_list), 1)

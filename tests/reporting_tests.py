@@ -5,10 +5,11 @@ import os
 import time
 import uuid
 
-from tornado import concurrent, gen, httpclient, testing, web
+from tornado import concurrent, gen, httpclient, queues, testing, web
 import opentracing
 
 from sprocketstracing import reporting, tracing
+from tests import helpers
 import sprocketstracing
 
 
@@ -26,6 +27,64 @@ class SleepingHandler(tracing.RequestHandlerMixin, web.RequestHandler):
                 yield gen.sleep(float(self.get_query_argument('sleep')))
         self.set_status(int(self.get_query_argument('status', 200)))
         self.finish()
+
+
+class ReportingTests(testing.AsyncTestCase):
+
+    def test_that_reporter_is_flushed_when_queue_get_fails(self):
+        get_future = concurrent.Future()
+        get_future.set_exception(RuntimeError())
+        span_queue = mock.Mock()
+        span_queue.get.return_value = get_future
+
+        flush_future = concurrent.Future()
+        flush_future.set_result(None)
+        reporter = mock.Mock()
+        reporter.flush.return_value = flush_future
+
+        coro = reporting.report_spans(reporter, span_queue)
+        self.io_loop.add_future(coro, lambda r: self.stop(r))
+        result = self.wait()
+
+        reporter.flush.assert_called_once_with()
+        self.assertIsInstance(result.exception(), RuntimeError)
+
+    def test_that_span_without_start_time_is_not_reported(self):
+        span_queue = queues.Queue()
+        reporter = reporting.NullReporter()
+        process_span = helpers.create_method_proxy(reporter, 'process_span')
+
+        tracer = tracing.Tracer(span_queue)
+        span = tracer.start_span('some-operation')
+        span._start_time = 0
+
+        self.io_loop.spawn_callback(reporting.report_spans, reporter,
+                                    span_queue)
+        span_queue.put_nowait(span)
+        self.io_loop.run_sync(span_queue.join)
+
+        process_span.assert_not_called()
+
+    def test_that_reporter_flush_failures_are_logged(self):
+        get_future = concurrent.Future()
+        get_future.set_exception(RuntimeError())
+        span_queue = mock.Mock()
+        span_queue.get.return_value = get_future
+
+        flush_future = concurrent.Future()
+        flush_future.set_exception(RuntimeError)
+        reporter = mock.Mock()
+        reporter.flush.return_value = flush_future
+
+        logger = mock.Mock()
+        with mock.patch('sprocketstracing.reporting.logging') as logging_mod:
+            logging_mod.getLogger = mock.Mock(return_value=logger)
+
+            coro = reporting.report_spans(reporter, span_queue)
+            self.io_loop.add_future(coro, lambda r: self.stop(r))
+            self.wait()
+
+        self.assertTrue(logger.exception.called)
 
 
 class ZipkinReporterTests(testing.AsyncHTTPTestCase):
@@ -303,8 +362,8 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         response = httpclient.HTTPResponse(mock.Mock(), 400)
         future = concurrent.Future()
         future.set_result(response)
-        reporter = self.application.settings['opentracing']['state']['reporter']
-        client = reporter.http_client
+        state = self.application.settings['opentracing']['state']
+        client = state['reporter'].http_client
         client.fetch = mock.Mock(return_value=future)
 
         with self.application.opentracing.start_span('some-span') as span:

@@ -1,4 +1,10 @@
-from sprocketstracing import tracing
+from unittest import mock
+
+import iso8601
+import maya
+import opentracing
+
+from sprocketstracing import install, tracing
 import tests.helpers
 
 
@@ -104,3 +110,79 @@ class SpanContextTests(tests.helpers.SprocketsTracingTestCase):
 
         span.service_name = 'span'
         self.assertEqual(span.service_name, 'span')
+
+
+class SpanTests(tests.helpers.SprocketsTracingTestCase):
+
+    def setUp(self):
+        super(SpanTests, self).setUp()
+        install(self.application, mock.Mock())
+
+    def test_that_boolean_tags_are_preserved(self):
+        with opentracing.tracer.start_span('operation') as span:
+            span.set_tag('a bool', True)
+            span.set_tag('another bool', False)
+
+            self.assertIs(span.get_tag('a bool'), True)
+            self.assertIs(span.get_tag('another bool'), False)
+
+    def test_that_numeric_tags_are_preserved(self):
+        with opentracing.tracer.start_span('operation') as span:
+            span.set_tag('a float', 22.0 / 7.0)
+            span.set_tag('an int', 42)
+
+            self.assertAlmostEqual(span.get_tag('a float'), 22.0 / 7.0, 6)
+            self.assertEqual(span.get_tag('an int'), 42)
+
+    def test_that_string_tags_are_preserved(self):
+        with opentracing.tracer.start_span('operation') as span:
+            span.set_tag('s', 'tring')
+
+            self.assertEqual(span.get_tag('s'), 'tring')
+
+    def test_that_datetimes_are_isoformatted(self):
+        now = maya.now()
+        with opentracing.tracer.start_span('operation') as span:
+            # first do a tzaware one
+            span.set_tag('now', now.datetime())
+            self.assertEqual(iso8601.parse_date(span.get_tag('now')),
+                             now.datetime())
+
+            # tz-naive values are assumed to be UTC
+            span.set_tag('now', now.datetime(naive=True))
+            self.assertEqual(
+                span.get_tag('now'),
+                now.datetime(naive=True).strftime(
+                    '%Y-%m-%dT%H:%M:%S.%f+00:00'))
+
+    def test_that_finished_spans_are_not_finished_twice(self):
+        span = opentracing.tracer.start_span('operation')
+        opentracing.tracer.complete_span = mock.Mock()
+
+        span.finish()
+        opentracing.tracer.complete_span.assert_called_once_with(span)
+        span.finish()
+        opentracing.tracer.complete_span.assert_called_once_with(span)
+
+    def test_that_duration_is_not_set_until_finished(self):
+        span = opentracing.tracer.start_span('operation')
+        self.assertIsNone(span.duration)
+
+        span.finish()
+        self.assertIsNotNone(span.duration)
+
+    def test_that_exception_is_logged_if_span_finishes_with_exception(self):
+        exc = RuntimeError()
+        span = opentracing.tracer.start_span('operation')
+        span.log_kv = mock.Mock()
+        try:
+            with span:
+                raise exc
+        except RuntimeError:
+            pass
+
+        span.log_kv.assert_called_once_with({
+            'python.exception.type': exc.__class__,
+            'python.exception.val': exc,
+            'python.exception.tb': mock.ANY,
+        })

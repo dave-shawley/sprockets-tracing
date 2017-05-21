@@ -1,3 +1,5 @@
 coverage
+iso8601
+maya
 mock
 nose

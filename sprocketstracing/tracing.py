@@ -1,4 +1,5 @@
 import binascii
+import datetime
 import logging
 import os
 import time
@@ -442,6 +443,11 @@ class Span(object):
         same `tag`.
 
         """
+        if isinstance(value, datetime.datetime):
+            if not value.tzinfo:
+                value = value.strftime('%Y-%m-%dT%H:%M:%S.%f+00:00')
+            else:
+                value = value.isoformat()
         self._tags[tag] = value
 
     def __enter__(self):

@@ -5,7 +5,8 @@ import os
 import signal
 
 from sprocketstracing import tracing
-from tornado import concurrent,gen, httpserver, ioloop, web
+from tornado import concurrent, gen, httpserver, ioloop, web
+import opentracing
 import sprocketstracing
 
 
@@ -29,15 +30,27 @@ class TimeHandler(tracing.RequestHandlerMixin, web.RequestHandler):
         self.tracing_operation = 'fetch-time'
 
     @gen.coroutine
+    def prepare(self):
+        maybe_future = super(TimeHandler, self).prepare()
+        if concurrent.is_future(maybe_future):
+            yield maybe_future
+
+        force_sample = self.get_query_argument('force-sample', 'false')
+        if force_sample.lower() in ('true', 'yes', '1', 't'):
+            self.request_is_traced = True
+
+    @gen.coroutine
     def get(self):
         response = {'start_time': datetime.datetime.now(UTC()).isoformat()}
         before_time = self.get_query_argument('sleep-before', 0)
         if before_time:
-            yield gen.sleep(float(before_time))
+            with opentracing.start_child_span(self.span, 'sleep-before'):
+                yield gen.sleep(float(before_time))
         response['time'] = datetime.datetime.now(UTC()).isoformat()
         after_time = self.get_query_argument('sleep-after', 0)
         if after_time:
-            yield gen.sleep(float(after_time))
+            with opentracing.start_child_span(self.span, 'sleep-after'):
+                yield gen.sleep(float(after_time))
         response['end_time'] = datetime.datetime.now(UTC()).isoformat()
         self.set_status(200)
         self.set_header('Content-Type', 'application/json; charset="utf8"')
@@ -45,17 +58,17 @@ class TimeHandler(tracing.RequestHandlerMixin, web.RequestHandler):
         self.finish()
 
 
-def make_app():
-    zipkin_url = 'http://{}:{}/api/v1/spans'.format(
-        os.environ.get('ZIPKIN_HOST', '127.0.0.1'),
-        os.environ.get('ZIPKIN_PORT', 9411))
+def make_app(**settings):
+    settings['debug'] = True
+    zipkin_url = os.environ.get('ZIPKIN_URL',
+                                'http://127.0.0.1:9411/api/v1')
     iol = ioloop.IOLoop.instance()
     app = web.Application([web.url('/', TimeHandler)],
                           opentracing={'service_name': 'Father Time',
                                        'report_format': 'zipkin',
                                        'report_target': zipkin_url,
                                        'propagation_syntax': 'b3'},
-                          debug=True)
+                          **settings)
     sprocketstracing.install(app, iol)
     return app
 

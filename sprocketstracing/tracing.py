@@ -215,7 +215,13 @@ class SpanContext(object):
             elif isinstance(parent, Span):
                 self._parents.append(parent.context)
             elif isinstance(parent, (bytes, str)):
-                self._parents.append(SpanContext(span_id=parent))
+                try:
+                    str_parent = parent.decode('ascii')
+                except AttributeError:
+                    str_parent = parent
+                self._parents.append(SpanContext(span_id=str_parent))
+            else:
+                raise ValueError('invalid trace type: %r' % parent)
 
     @property
     def trace_id(self):

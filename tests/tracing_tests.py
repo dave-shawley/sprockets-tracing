@@ -111,6 +111,36 @@ class SpanContextTests(tests.helpers.SprocketsTracingTestCase):
         span.service_name = 'span'
         self.assertEqual(span.service_name, 'span')
 
+    def test_that_context_can_be_created_with_parent_span_id(self):
+        context = tracing.SpanContext(parents=['12345', b'67890'])
+        self.assertEqual(len(context.parents), 2)
+        self.assertEqual(context.parents[0].span_id, '12345')
+        self.assertEqual(context.parents[1].span_id, '67890')
+
+    def test_that_creating_with_unacceptable_parent_type_fails(self):
+        with self.assertRaises(ValueError):
+            tracing.SpanContext(parents=[12345])
+
+    def test_that_service_endpoint_is_none_when_unavailable(self):
+        grand_parent = tracing.SpanContext()
+        self.assertIsNone(grand_parent.service_endpoint)
+
+        parent = tracing.SpanContext(parents=[grand_parent])
+        self.assertIsNone(parent.service_endpoint)
+
+        context = tracing.SpanContext(parents=[parent])
+        self.assertIsNone(context.service_endpoint)
+
+    def test_that_service_name_is_none_when_unavailable(self):
+        grand_parent = tracing.SpanContext()
+        self.assertIsNone(grand_parent.service_name)
+
+        parent = tracing.SpanContext(parents=[grand_parent])
+        self.assertIsNone(parent.service_name)
+
+        context = tracing.SpanContext(parents=[parent])
+        self.assertIsNone(context.service_name)
+
 
 class SpanTests(tests.helpers.SprocketsTracingTestCase):
 

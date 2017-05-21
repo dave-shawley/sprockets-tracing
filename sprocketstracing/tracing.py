@@ -23,6 +23,20 @@ def get_random_bytes(num_bytes):
     return binascii.hexlify(os.urandom(num_bytes)).decode('ascii').lower()
 
 
+def _get_logger(handler):
+    """
+    Get an appropriate logger from a request handler.
+
+    :param tornado.web.RequestHandler handler: handler to get a logger for
+    :return: the :class:`logging.Logger` instance to log messages assocatied
+        with `handler`
+    :rtype: logging.Logger
+
+    """
+    return getattr(handler, 'logger',
+                   logging.getLogger('sprocketstracing.RequestHandlerMixin'))
+
+
 class RequestHandlerMixin(web.RequestHandler):
 
     """
@@ -50,7 +64,7 @@ class RequestHandlerMixin(web.RequestHandler):
         if concurrent.is_future(maybe_future):
             yield maybe_future
 
-        logger = logging.getLogger('sprocketstracing.RequestHandlerMixin')
+        logger = _get_logger(self)
         if self.__operation_name is None:
             logger.warning('no operation name, tracing disabled. '
                            'Did you forget to set tracing_operation?')
@@ -130,6 +144,31 @@ class RequestHandlerMixin(web.RequestHandler):
 
         """
         self.__operation_name = operation_name
+
+    @property
+    def request_is_traced(self):
+        """Should this request be submitted to the tracing server?"""
+        return self.span.sampled
+
+    @request_is_traced.setter
+    def request_is_traced(self, on_or_off):
+        """
+        Control whether this request is going to submitted or not.
+
+        :param bool on_or_off: should spans associated with this request
+            be submitted or not?
+
+        This property should be established as early as possible in the
+        processing of a request.  If will be initially based on the
+        incoming request headers -- if the requester propagates the IDs
+        for an active trace, then tracing will be enabled as a proparly
+        registered child of the trace; otherwise, tracing is disabled.
+
+        """
+        currently_traced = self.span.sampled
+        self.span.sampled = on_or_off
+        if bool(on_or_off) != currently_traced:
+            self.__set_tracing_headers()
 
     def on_finish(self):
         if self.span:

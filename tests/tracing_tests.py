@@ -216,3 +216,30 @@ class SpanTests(tests.helpers.SprocketsTracingTestCase):
             'python.exception.val': exc,
             'python.exception.tb': mock.ANY,
         })
+
+
+class TracerTests(tests.helpers.SprocketsTracingTestCase):
+
+    def test_that_kwargs_are_passed_through_to_new_span(self):
+        tracer = tracing.Tracer(mock.Mock())
+        with mock.patch('sprocketstracing.tracing.Span') as SpanClass:
+            span = tracer.start_span('operation_name', what='ever')
+            SpanClass.assert_called_once_with(
+                'operation_name', mock.ANY, what='ever')
+            self.assertIs(span, SpanClass.return_value)
+
+            SpanClass.reset_mock()
+            span = tracer.start_span('operation_name',
+                                     child_of=tracing.SpanContext(),
+                                     what='ever')
+            SpanClass.assert_called_once_with(
+                'operation_name', mock.ANY, what='ever')
+            self.assertIs(span, SpanClass.return_value)
+
+    def test_that_stop_returns_none_when_called_second_time(self):
+        span_queue = mock.Mock()
+        tracer = tracing.Tracer(span_queue)
+        future = tracer.stop()
+        self.assertIs(future, span_queue.join.return_value)
+        self.assertIsNone(tracer.stop())
+        span_queue.join.assert_called_once_with()

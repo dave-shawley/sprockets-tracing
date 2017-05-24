@@ -1,10 +1,13 @@
-from unittest import mock
+import socket
+import unittest.mock
 
+from tornado import concurrent, gen, httputil, netutil, testing, web
 import iso8601
 import maya
 import opentracing
 
-from sprocketstracing import install, tracing
+from sprocketstracing import install, reporting, shutdown, tracing
+import sprocketstracing.testing
 import tests.helpers
 
 
@@ -146,7 +149,7 @@ class SpanTests(tests.helpers.SprocketsTracingTestCase):
 
     def setUp(self):
         super(SpanTests, self).setUp()
-        install(self.application, mock.Mock())
+        install(self.application, unittest.mock.Mock())
 
     def test_that_boolean_tags_are_preserved(self):
         with opentracing.tracer.start_span('operation') as span:
@@ -187,7 +190,7 @@ class SpanTests(tests.helpers.SprocketsTracingTestCase):
 
     def test_that_finished_spans_are_not_finished_twice(self):
         span = opentracing.tracer.start_span('operation')
-        opentracing.tracer.complete_span = mock.Mock()
+        opentracing.tracer.complete_span = unittest.mock.Mock()
 
         span.finish()
         opentracing.tracer.complete_span.assert_called_once_with(span)
@@ -204,7 +207,7 @@ class SpanTests(tests.helpers.SprocketsTracingTestCase):
     def test_that_exception_is_logged_if_span_finishes_with_exception(self):
         exc = RuntimeError()
         span = opentracing.tracer.start_span('operation')
-        span.log_kv = mock.Mock()
+        span.log_kv = unittest.mock.Mock()
         try:
             with span:
                 raise exc
@@ -214,18 +217,18 @@ class SpanTests(tests.helpers.SprocketsTracingTestCase):
         span.log_kv.assert_called_once_with({
             'python.exception.type': exc.__class__,
             'python.exception.val': exc,
-            'python.exception.tb': mock.ANY,
+            'python.exception.tb': unittest.mock.ANY,
         })
 
 
 class TracerTests(tests.helpers.SprocketsTracingTestCase):
 
     def test_that_kwargs_are_passed_through_to_new_span(self):
-        tracer = tracing.Tracer(mock.Mock())
-        with mock.patch('sprocketstracing.tracing.Span') as SpanClass:
+        tracer = tracing.Tracer(unittest.mock.Mock())
+        with unittest.mock.patch('sprocketstracing.tracing.Span') as SpanClass:
             span = tracer.start_span('operation_name', what='ever')
             SpanClass.assert_called_once_with(
-                'operation_name', mock.ANY, what='ever')
+                'operation_name', unittest.mock.ANY, what='ever')
             self.assertIs(span, SpanClass.return_value)
 
             SpanClass.reset_mock()
@@ -233,13 +236,161 @@ class TracerTests(tests.helpers.SprocketsTracingTestCase):
                                      child_of=tracing.SpanContext(),
                                      what='ever')
             SpanClass.assert_called_once_with(
-                'operation_name', mock.ANY, what='ever')
+                'operation_name', unittest.mock.ANY, what='ever')
             self.assertIs(span, SpanClass.return_value)
 
     def test_that_stop_returns_none_when_called_second_time(self):
-        span_queue = mock.Mock()
+        span_queue = unittest.mock.Mock()
         tracer = tracing.Tracer(span_queue)
         future = tracer.stop()
         self.assertIs(future, span_queue.join.return_value)
         self.assertIsNone(tracer.stop())
         span_queue.join.assert_called_once_with()
+
+
+class RequestHandler(tracing.RequestHandlerMixin, web.RequestHandler):
+
+    @gen.coroutine
+    def prepare(self):
+        if self.get_query_argument('no-operation-name', None) is None:
+            self.tracing_operation = 'running-test'
+        yield super(RequestHandler, self).prepare()
+        if self.get_query_argument('force-sample', None) is not None:
+            self.request_is_traced = True
+
+    def get(self):
+        self.set_status(204)
+
+
+class TracingMixinTests(testing.AsyncHTTPTestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(TracingMixinTests, cls).setUpClass()
+        reporting.add_reporter('recorder',
+                               sprocketstracing.testing.RecordingReporter)
+
+    def setUp(self):
+        self.application = None
+        super(TracingMixinTests, self).setUp()
+        ipv4_port, ipv6_port = None, None
+        for sock in self.http_server._sockets.values():
+            if sock.family == socket.AF_INET:
+                _, ipv4_port = sock.getsockname()
+            if sock.family == socket.AF_INET6:
+                _, ipv6_port = sock.getsockname()
+
+        if not ipv4_port and not ipv6_port:  # should never happen
+            pass
+        elif not ipv4_port:
+            sock = netutil.bind_sockets(ipv6_port, '127.0.0.1',
+                                        family=socket.AF_INET)[0]
+            self.http_server.add_sockets([sock])
+        elif not ipv6_port and socket.has_ipv6:
+            sock = netutil.bind_sockets(ipv4_port, '::1',
+                                        family=socket.AF_INET6)[0]
+            self.http_server.add_sockets([sock])
+
+    def tearDown(self):
+        coro = shutdown(self.application)
+        self.io_loop.add_future(coro, self.stop)
+        self.wait()
+        super(TracingMixinTests, self).tearDown()
+
+    def get_app(self):
+        settings = {'propagation_syntax': 'b3',
+                    'report_format': 'recorder',
+                    'service_name': 'test-service'}
+        self.application = web.Application([web.url(r'/', RequestHandler)],
+                                           opentracing=settings, debug=True)
+        install(self.application, self.io_loop)
+        return self.application
+
+    @property
+    def captured_spans(self):
+        r = self.application.settings['opentracing']['state']['reporter']
+        return r.captured_spans
+
+    def test_that_span_recorded_when_tracing_headers_present(self):
+        span = opentracing.tracer.start_span('outer-operation')
+        self.fetch('/', headers={'X-B3-TraceId': span.context.trace_id,
+                                 'X-B3-SpanId': span.context.span_id,
+                                 'X-B3-Sampled': '1'})
+        self.assertEqual(len(self.captured_spans), 1)
+        self.assertEqual(self.captured_spans[0].context.trace_id,
+                         span.context.trace_id)
+        self.assertEqual(self.captured_spans[0].context.parents[0].span_id,
+                         span.context.span_id)
+        self.assertNotEqual(self.captured_spans[0].context.span_id,
+                            span.context.span_id)
+
+    def test_that_user_agent_included_in_span(self):
+        span = opentracing.tracer.start_span('outer-operation')
+        self.fetch('/', headers={'X-B3-TraceId': span.context.trace_id,
+                                 'X-B3-SpanId': span.context.span_id,
+                                 'X-B3-Sampled': '1',
+                                 'User-Agent': 'tests'})
+        self.assertEqual(len(self.captured_spans), 1)
+        self.assertEqual(self.captured_spans[0].get_tag('http.user_agent'),
+                         'tests')
+
+    def test_that_span_not_recorded_without_operation_name(self):
+        self.fetch('/?no-operation-name')
+        self.assertEqual(self.captured_spans, [])
+
+    def test_that_unknown_propagation_syntax_ignores_span(self):
+        opentracing.tracer.propagation_syntax = 'nothing-valid'
+        response = self.fetch('/')
+        self.assertEqual(response.code, 204)
+        self.assertEqual(len(self.captured_spans), 0)
+
+    def test_that_ipv4_literals_are_reported(self):
+        self.http_client.fetch(
+            'http://127.0.0.1:{}/?force-sample'.format(self.get_http_port()),
+            self.stop)
+        response = self.wait()
+        self.assertEqual(response.code, 204)
+        self.assertEqual(len(self.captured_spans), 1)
+        self.assertEqual(self.captured_spans[0].context.service_endpoint,
+                         ('127.0.0.1', self.get_http_port()))
+
+    @unittest.skipUnless(socket.has_ipv6, 'IPv6 is not supported')
+    def test_that_ipv6_literals_are_reported(self):
+        self.http_client.fetch(
+            'http://[::1]:{}/?force-sample'.format(self.get_http_port()),
+            self.stop)
+        response = self.wait()
+        self.assertEqual(response.code, 204)
+        self.assertEqual(len(self.captured_spans), 1)
+        self.assertEqual(self.captured_spans[0].context.service_endpoint,
+                         ('::1', self.get_http_port()))
+
+    def test_that_service_port_uses_scheme_when_not_set(self):
+        connection = unittest.mock.Mock()
+        connection.context.remote_ip = '127.0.0.1'
+
+        def run_prepare(host):
+            request = httputil.HTTPServerRequest(
+                method='GET', uri='/', host=host, connection=connection)
+            handler = tracing.RequestHandlerMixin(self.application, request)
+            handler.tracing_operation = 'some-operation'
+            maybe_future = handler.prepare()
+            if concurrent.is_future(maybe_future):
+                self.io_loop.add_future(maybe_future, self.stop)
+                self.wait()
+            return handler
+
+        connection.context.protocol = 'http'
+        handler = run_prepare('127.0.0.1')
+        self.assertEqual(handler.span.context.service_endpoint[1], 80)
+
+        connection.context.protocol = 'https'
+        handler = run_prepare('127.0.0.1')
+        self.assertEqual(handler.span.context.service_endpoint[1], 443)
+
+        handler = run_prepare('[::1]')
+        self.assertEqual(handler.span.context.service_endpoint[1], 443)
+
+        connection.context.protocol = None  # should never happen
+        handler = run_prepare('127.0.0.1')
+        self.assertEqual(handler.span.context.service_endpoint[1], 80)

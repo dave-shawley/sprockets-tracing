@@ -61,11 +61,11 @@ class RequestHandlerMixin(web.RequestHandler):
     @gen.coroutine
     def prepare(self):
         maybe_future = super(RequestHandlerMixin, self).prepare()
-        if concurrent.is_future(maybe_future):
+        if concurrent.is_future(maybe_future):  # pragma: no cover
             yield maybe_future
 
         logger = _get_logger(self)
-        if self.__operation_name is None:
+        if self.tracing_operation is None:
             logger.warning('no operation name, tracing disabled. '
                            'Did you forget to set tracing_operation?')
             self.span = None
@@ -80,7 +80,7 @@ class RequestHandlerMixin(web.RequestHandler):
 
         else:
             opts = self.opentracing_options.copy()
-            opts['operation_name'] = self.__operation_name
+            opts['operation_name'] = self.tracing_operation
             opts['start_time'] = time.time()
             if parent_context:
                 opts['child_of'] = parent_context
@@ -109,7 +109,7 @@ class RequestHandlerMixin(web.RequestHandler):
                 if self.request.host[idx + 1:].startswith(':'):
                     port = self.request.host[idx + 2:]
             else:
-                addr, _, port = self.request.host.rpartition(':')
+                addr, _, port = self.request.host.partition(':')
 
             if port:
                 port = int(port)
@@ -117,6 +117,8 @@ class RequestHandlerMixin(web.RequestHandler):
                 port = 80
             elif self.request.protocol == 'https':
                 port = 443
+            else:  # should never happen but could?!
+                port = 80
             self.span.context.service_endpoint = addr, port
 
             self.__set_tracing_headers()
@@ -165,17 +167,15 @@ class RequestHandlerMixin(web.RequestHandler):
         registered child of the trace; otherwise, tracing is disabled.
 
         """
-        currently_traced = self.span.sampled
         self.span.sampled = on_or_off
-        if bool(on_or_off) != currently_traced:
-            self.__set_tracing_headers()
+        self.__set_tracing_headers()
 
     def on_finish(self):
         if self.span:
             status_code = self.get_status()
             if hasattr(self, '_reason'):
                 reason = self._reason
-            else:
+            else:  # pragma: no cover - insulate against tornado internals
                 reason = httputil.responses.get(status_code, 'Unknown')
             self.span.set_tag('http.reason', reason)
             self.span.set_tag('http.status_code', status_code)

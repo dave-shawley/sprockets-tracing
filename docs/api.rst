@@ -51,3 +51,8 @@ Span Propagation
 
 .. autoclass:: sprocketstracing.propagation.B3PropagationSyntax
    :members:
+
+Testing Utilities
+-----------------
+.. autoclass:: sprocketstracing.testing.RecordingReporter
+   :members:

@@ -132,7 +132,7 @@ class ZipkinReporter(NullReporter):
         if not report_target.endswith('/'):
             report_target += '/'
         self.report_url = urllib.parse.urljoin(report_target, 'spans')
-        self.json_encoder = json.JSONEncoder(default=jsonify)
+        self.json_encoder = json.JSONEncoder()
         self._client = None
         self._client_options = kwargs.get('client_options', {})
         self._client_options.setdefault('force_instance', True)
@@ -359,9 +359,3 @@ class ZipkinPayloadBuilder(object):
 
 add_reporter('null', NullReporter)
 add_reporter('zipkin', ZipkinReporter)
-
-
-def jsonify(obj):
-    if isinstance(obj, bytes):
-        return obj.decode('utf-8')
-    raise TypeError(repr(obj) + ' is not JSON serializable')

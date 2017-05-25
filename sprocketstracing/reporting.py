@@ -258,6 +258,10 @@ class ZipkinReporter(NullReporter):
 
         return tags, endpoint
 
+    def __repr__(self):
+        return '<ZipkinReporter service_name="{}" report_url="{}">'.format(
+            self.service_name, self.report_url)
+
 
 class ZipkinPayloadBuilder(object):
 

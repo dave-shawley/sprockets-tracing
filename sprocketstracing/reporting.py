@@ -194,7 +194,7 @@ class ZipkinReporter(NullReporter):
                 payload.add_binary_annotation(annotation, value,
                                               add_endpoint=add_endpoint)
 
-        kind = tags.pop('span.kind', 'client')
+        kind = tags.pop('span.kind', '')
         if kind in ('server', 'periodic'):
             payload.add_annotation('sr', start_micros)
             payload.add_annotation('ss', start_micros + duration_micros)
@@ -208,9 +208,10 @@ class ZipkinReporter(NullReporter):
                 payload.add_binary_annotation('sa', endpoint=endpoint)
 
         else:
-            self.logger.warning('skipping %r, unhandled span.kind %s',
-                                span, kind)
-            return None
+            payload.add_binary_annotation(
+                'lc', span.context.service_name.lower())
+            payload.add_annotation('start', start_micros)
+            payload.add_annotation('end', start_micros + duration_micros)
 
         for name, value in tags.items():
             payload.add_binary_annotation(name, value)
@@ -279,7 +280,7 @@ class ZipkinPayloadBuilder(object):
     def __init__(self, span):
         self.span = span
         self.endpoint = {'serviceName': span.context.service_name}
-        
+
         if span.context.service_endpoint:
             addr, port = span.context.service_endpoint
             _, endpoint = ZipkinReporter.extract_endpoint(

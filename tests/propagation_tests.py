@@ -21,7 +21,8 @@ class B3PropagationTests(tests.helpers.SprocketsTracingTestCase):
 
     @staticmethod
     def get_random_bits(bit_count):
-        return binascii.hexlify(os.urandom(bit_count // 8)).lower().decode('ascii')
+        bits = binascii.hexlify(os.urandom(bit_count // 8))
+        return bits.decode('ascii').lower()
 
     def test_that_all_headers_are_extracted(self):
         headers = httputil.HTTPHeaders()
@@ -146,3 +147,18 @@ class B3PropagationTests(tests.helpers.SprocketsTracingTestCase):
                                   opentracing.Format.HTTP_HEADERS,
                                   new_headers)
         self.assertEqual(new_headers, headers)
+
+    def test_that_enabling_sampling_sets_sampled_header(self):
+        headers = {}
+        context = opentracing.tracer.extract(
+            opentracing.Format.HTTP_HEADERS, headers)
+        self.assertFalse(context.sampled)
+
+        context.sampled = True
+        new_headers = {}
+        opentracing.tracer.inject(context,
+                                  opentracing.Format.HTTP_HEADERS,
+                                  new_headers)
+        self.assertEqual(new_headers['X-B3-SpanId'], context.span_id)
+        self.assertEqual(new_headers['X-B3-TraceId'], context.trace_id)
+        self.assertEqual(new_headers['X-B3-Sampled'], '1')

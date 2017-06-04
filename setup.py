@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 #
 
-import os.path
-
 import setuptools
 
 import sprocketstracing

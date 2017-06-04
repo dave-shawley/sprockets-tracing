@@ -3,6 +3,7 @@
    :hidden:
 
    examples
+   model
    api
    dev
    history

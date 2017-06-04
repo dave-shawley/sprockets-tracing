@@ -17,6 +17,31 @@ to the name of the operation for the trace.
    :linenos:
    :dedent: 4
 
+The ``RequestHandlerMixin`` sets the following tags on the span:
+
++-----------------+-----------------------------------------------------+
+| span.kind       | set to ``server``                                   |
++-----------------+-----------------------------------------------------+
+| server.type     | set to ``http``                                     |
++-----------------+-----------------------------------------------------+
+| http.method     | stores the HTTP method                              |
++-----------------+-----------------------------------------------------+
+| http.url        | stores the full URL reconstructed from the request  |
++-----------------+-----------------------------------------------------+
+| http.version    | stores the requested HTTP version                   |
++-----------------+-----------------------------------------------------+
+| peer.address    | stores the client's IP endpoint                     |
++-----------------+-----------------------------------------------------+
+| http.user_agent | stores the user agent if present                    |
++-----------------+-----------------------------------------------------+
+
+The span is available as the
+:attr:`~sprocketstracing.tracing.RequestHandlerMixin.span` attribute on
+the request handler so you can add tags and modify it as required.
+:attr:`~sprocketstracing.tracing.RequestHandlerMixin.request_is_traced`
+is one of the most important attributes.  It controls whether the current
+request is going to be submitted to the tracing infrastructure.
+
 The 
 :attr:`~sprocketstracing.tracing.RequestHandlerMixin.opentracing_options`
 attribute is created by the 
@@ -54,14 +79,12 @@ A simple implementation of the mixin looks something like:
       
        def prepare(self):
            super(RequestHandlerMixin, self).prepare()
-           kwargs = {'start_time': ioloop.time()}
            context = opentracing.tracer.extract(
               opentracing.Format.HTTP_HEADERS,
               self.request.headers)
-           if context:
-              kwargs['child_of'] = context
            self.span = opentracing.tracer.start_span(
-              self.opentracing_options['operation_name'], **kwargs)
+              self.opentracing_options['operation_name'],
+              start_time=time.time(), child_of=context)
            self.span.set_tag('span.kind', 'server')
            self.span.set_tag('http.method', self.request.method)
            self.span.set_tag('http.version', self.request.version)

@@ -200,12 +200,24 @@ class ZipkinReporter(NullReporter):
             payload.add_annotation('ss', start_micros + duration_micros)
             add_bin_if_tag_present('peer.address', 'ca', add_endpoint=True)
 
-        elif kind in ('client', 'producer'):
+        elif kind == 'client':
             payload.add_annotation('cs', start_micros)
             payload.add_annotation('cr', start_micros + duration_micros)
-            tags, endpoint = self.extract_endpoint(**tags)
+            tags, endpoint = self.extract_endpoint('peer', **tags)
             if endpoint:
                 payload.add_binary_annotation('sa', endpoint=endpoint)
+
+        elif kind == 'producer':
+            payload.add_annotation('cs', start_micros)
+            tags, endpoint = self.extract_endpoint('broker', **tags)
+            if endpoint:
+                payload.add_binary_annotation('sa', endpoint=endpoint)
+
+        elif kind == 'consumer':
+            payload.add_annotation('sr', start_micros)
+            tags, endpoint = self.extract_endpoint('broker', **tags)
+            if endpoint:
+                payload.add_binary_annotation('ca', endpoint=endpoint)
 
         else:
             payload.add_binary_annotation(
@@ -219,20 +231,20 @@ class ZipkinReporter(NullReporter):
         return payload.as_dict()
 
     @staticmethod
-    def extract_endpoint(**tags):
+    def extract_endpoint(prefix, **tags):
         sentinel = object()
-        tag_map = {'peer.service': 'serviceName',
-                   'peer.ipv4': 'ipv4',
-                   'peer.ipv6': 'ipv6',
-                   'peer.port': 'port'}
+        tag_map = {'{}.service': 'serviceName',
+                   '{}.ipv4': 'ipv4',
+                   '{}.ipv6': 'ipv6',
+                   '{}.port': 'port'}
         endpoint = {}
         for tracing_name, zipkin_name in tag_map.items():
-            value = tags.pop(tracing_name, sentinel)
+            value = tags.pop(tracing_name.format(prefix), sentinel)
             if value is not sentinel:
                 endpoint[zipkin_name] = value
 
         if 'ipv4' not in endpoint and 'ipv6' not in endpoint:
-            name = tags.pop('peer.hostname', sentinel)
+            name = tags.pop('{}.hostname'.format(prefix), sentinel)
             if name is not sentinel:
                 addrs = socket.getaddrinfo(name, 0,
                                            family=socket.AF_UNSPEC,
@@ -288,7 +300,7 @@ class ZipkinPayloadBuilder(object):
         if span.context.service_endpoint:
             addr, port = span.context.service_endpoint
             _, endpoint = ZipkinReporter.extract_endpoint(
-                **{'peer.hostname': addr, 'peer.port': port})
+                'peer', **{'peer.hostname': addr, 'peer.port': port})
             self.endpoint.update(endpoint)
 
         self.payload = {'name': span.operation_name.lower(),

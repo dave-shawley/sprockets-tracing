@@ -312,6 +312,9 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
             span.context.service_endpoint = '127.0.0.1', 0
             span.sampled = True
             span.set_tag('span.kind', 'producer')
+            span.set_tag('broker.service', 'qpid')
+            span.set_tag('broker.ipv4', '127.0.0.1')
+            span.set_tag('broker.port', '5672')
 
             trace_id = span.context.trace_id
 
@@ -322,7 +325,40 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
         self.assertEqual(len(spans), 1)
         keys = [annotation['value'] for annotation in spans[0]['annotations']]
         self.assertIn('cs', keys)
-        self.assertIn('cr', keys)
+
+        sa = [annotation['endpoint']
+              for annotation in spans[0]['binaryAnnotations']
+              if annotation['key'] == 'sa'][0]
+        self.assertEqual(sa['serviceName'], 'qpid')
+        self.assertEqual(sa['ipv4'], '127.0.0.1')
+        self.assertEqual(sa['port'], 5672)
+
+    def test_that_consumer_spans_are_reported_as_server_receives(self):
+        with self.application.opentracing.start_span('consumer') as span:
+            span.context.service_name = 'my-service'
+            span.context.service_endpoint = '127.0.0.1', 0
+            span.sampled = True
+            span.set_tag('span.kind', 'consumer')
+            span.set_tag('broker.service', 'qpid')
+            span.set_tag('broker.ipv4', '127.0.0.1')
+            span.set_tag('broker.port', '5672')
+
+            trace_id = span.context.trace_id
+
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        keys = [annotation['value'] for annotation in spans[0]['annotations']]
+        self.assertIn('sr', keys)
+
+        ca = [annotation['endpoint']
+              for annotation in spans[0]['binaryAnnotations']
+              if annotation['key'] == 'ca'][0]
+        self.assertEqual(ca['serviceName'], 'qpid')
+        self.assertEqual(ca['ipv4'], '127.0.0.1')
+        self.assertEqual(ca['port'], 5672)
 
     def test_that_unknown_span_types_are_not_reported(self):
         with self.application.opentracing.start_span('whatever') as span:

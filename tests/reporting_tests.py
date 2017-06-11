@@ -2,6 +2,7 @@ from unittest import mock
 from urllib import parse
 import json
 import os
+import socket
 import time
 import uuid
 
@@ -429,3 +430,58 @@ class ZipkinReporterTests(testing.AsyncHTTPTestCase):
 
         spans = self.retrieve_trace_by_id(trace_id, span_count=2)
         self.assertEqual(len(spans), 2)
+
+    def test_that_endpoint_hostname_is_resolved(self):
+        addr = socket.gethostbyname('www.example.com')
+        with self.application.opentracing.start_span('producer') as span:
+            span.context.service_name = 'whatever'
+            span.context.service_endpoint = '127.0.0.1', 99
+            span.sampled = True
+            span.set_tag('span.kind', 'producer')
+            span.set_tag('broker.service', 'qpid')
+            span.set_tag('broker.hostname', 'www.example.com')
+            span.set_tag('broker.port', '12345')
+
+            trace_id = span.context.trace_id
+
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        keys = [annotation['value'] for annotation in spans[0]['annotations']]
+        self.assertIn('cs', keys)
+
+        sa = [annotation['endpoint']
+              for annotation in spans[0]['binaryAnnotations']
+              if annotation['key'] == 'sa'][0]
+        self.assertEqual(sa['serviceName'], 'qpid')
+        self.assertEqual(sa['ipv4'], addr)
+        self.assertEqual(sa['port'], 12345)
+
+    def test_that_endpoint_address_is_parsed(self):
+        with self.application.opentracing.start_span('producer') as span:
+            span.context.service_name = 'whatever'
+            span.context.service_endpoint = '127.0.0.1', 99
+            span.sampled = True
+            span.set_tag('span.kind', 'producer')
+            span.set_tag('broker.service', 'qpid')
+            span.set_tag('broker.address', 'fe80::6bee:312:89a1:69f6')
+            span.set_tag('broker.port', '12345')
+
+            trace_id = span.context.trace_id
+
+        self.io_loop.add_future(gen.moment, lambda _: self.io_loop.stop())
+        self.io_loop.start()
+
+        spans = self.retrieve_trace_by_id(trace_id)
+        self.assertEqual(len(spans), 1)
+        keys = [annotation['value'] for annotation in spans[0]['annotations']]
+        self.assertIn('cs', keys)
+
+        sa = [annotation['endpoint']
+              for annotation in spans[0]['binaryAnnotations']
+              if annotation['key'] == 'sa'][0]
+        self.assertEqual(sa['serviceName'], 'qpid')
+        self.assertEqual(sa['ipv6'], 'fe80::6bee:312:89a1:69f6')
+        self.assertEqual(sa['port'], 12345)

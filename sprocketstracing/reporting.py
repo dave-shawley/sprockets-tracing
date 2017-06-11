@@ -244,9 +244,11 @@ class ZipkinReporter(NullReporter):
                 endpoint[zipkin_name] = value
 
         if 'ipv4' not in endpoint and 'ipv6' not in endpoint:
-            name = tags.pop('{}.hostname'.format(prefix), sentinel)
-            if name is not sentinel:
-                addrs = socket.getaddrinfo(name, 0,
+            name_or_addr = tags.get('{}.hostname'.format(prefix), sentinel)
+            if name_or_addr is sentinel:
+                name_or_addr = tags.pop('{}.address'.format(prefix), sentinel)
+            if name_or_addr is not sentinel:
+                addrs = socket.getaddrinfo(name_or_addr, 0,
                                            family=socket.AF_UNSPEC,
                                            type=socket.SOCK_STREAM,
                                            proto=socket.IPPROTO_TCP,

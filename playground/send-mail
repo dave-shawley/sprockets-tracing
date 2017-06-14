@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+
+workdir=`mktemp -q -d -t $0`
+rc=$?
+if test $rc -ne 0
+then
+	echo "Failed to create temporary directory: $rc."
+	exit 1
+fi
+trap "rm -fr $workdir" 0
+test -f .env && . ./.env
+test -z "$MAILTRAP_USER" && read -p 'Mailtrap User: ' MAILTRAP_USER
+read -p 'Sender:        ' sender
+read -p 'Subject:       ' subject
+echo 'Enter the message body, end with a EOF (Ctrl+D)'
+cat>$workdir/raw
+awk '{printf("%s\\n", $0)}' $workdir/raw >$workdir/body
+cat>$workdir/msg.json<<EOF
+{"sender":{"address":"$sender"}
+,"recipient":{"address":"$MAILTRAP_USER@mailtrap.io"}
+,"subject":"$subject"
+,"body":"`cat $workdir/body`"}
+EOF
+srvr_port=`docker-compose port message-server 80 | cut -d: -f2`
+curl -H 'Content-Type: application/json' \
+   --dump-header $workdir/headers \
+	http://127.0.0.1:$srvr_port/email \
+	--data-binary @$workdir/msg.json
+traceid=`awk '/X-B3-Trace/ {print $2}' $workdir/headers`
+echo "Trace URL: http://127.0.0.1:`docker-compose port zipkin 9411 | cut -d: -f2`/traces/$traceid"

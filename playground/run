@@ -1,0 +1,69 @@
+#!/bin/sh -e
+#
+
+test -n "$SHELLDEBUG" && set -x
+
+docker-compose down --remove-orphans --volumes
+if test "$1" != "nobuild"
+then
+	startdir=$(pwd)
+	cd ..
+	test -d dist && rm -fr dist
+	python setup.py sdist
+	cd dist
+
+	for dir in consumer message-server mail-poller
+	do
+		cd "$startdir/$dir"
+		test -d packages && rm -fr packages
+		mkdir packages
+		cp ../../dist/* packages
+	done
+
+	cd "$startdir"
+	docker-compose build
+fi
+
+get_exposed_port() {
+	docker-compose port $1 $2 | cut -d: -f2
+}
+
+if test ! -f .env
+then
+	read -p 'Mailtrap User:       ' MAILTRAP_USER
+	read -p 'Mailtrap Password:   ' MAILTRAP_PASSWORD
+	read -p 'Mailtrap API Token:  ' MAILTRAP_TOKEN
+	read -p 'Mailtrap Mailbox ID: ' MAILTRAP_BOXID
+	(echo "MAILTRAP_USER=$MAILTRAP_USER"
+	 echo "MAILTRAP_PASSWORD=$MAILTRAP_PASSWORD"
+	 echo "MAILTRAP_TOKEN=$MAILTRAP_TOKEN"
+	 echo "MAILTRAP_BOXID=$MAILTRAP_BOXID")>.env
+fi
+
+docker-compose pull
+docker-compose up -d mongodb rabbitmq zipkin
+echo "Waiting on RabbitMQ to come up..."
+rabbit_port=$(get_exposed_port rabbitmq 15672)
+while
+	! curl --silent http://127.0.0.1:$rabbit_port/api/healthchecks/node
+do
+	echo "... still waiting ..."
+	sleep 1
+done
+curl -XPUT --user guest:guest -sSf \
+	"http://127.0.0.1:$rabbit_port/api/queues/%2f/send-email" \
+	--data '{"auto_delete":false,"durable":true}'
+curl -XPUT --user guest:guest -sSf \
+	"http://127.0.0.1:$rabbit_port/api/exchanges/%2f/rpc" \
+	--data '{"type":"topic","auto_delete":false,"durable":true}'
+curl -XPOST --user guest:guest -sSf \
+	"http://127.0.0.1:$rabbit_port/api/bindings/%2f/e/rpc/q/send-email" \
+	--data '{"routing_key":"send.email"}'
+
+docker-compose up -d consumer message-server mail-poller
+
+cat<<EOF
+Rabbit MQ:      http://127.0.0.1:$(get_exposed_port rabbitmq 15672)
+Zipkin:         http://127.0.0.1:$(get_exposed_port zipkin 9411)
+Message-Server: http://127.0.0.1:$(get_exposed_port message-server 80)
+EOF

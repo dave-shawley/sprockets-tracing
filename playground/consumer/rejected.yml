@@ -1,0 +1,55 @@
+Application:
+  Connections:
+    rabbit:
+      host: rabbitmq
+      port: 5672
+      user: guest
+      vhost: /
+  Consumers:
+    emailer:
+      consumer: emailer.Emailer
+      connections:
+        - rabbit
+      qty: 1
+      queue: send-email
+      ack: true
+      qos_prefetch: 1
+      config:
+        opentracing:
+          enabled: true
+          propagation_syntax: b3
+          report_format: zipkin
+          report_target: http://zipkin:9411/api/v1
+          service_name: email_consumer
+        smtp:
+          host: smtp.mailtrap.io
+          port: 465
+          use_tls: true
+Daemon: {}
+Logging:
+  version: 1
+  formatters:
+    verbose:
+      format: "%(levelname)1.1s - %(name)s: %(message)s"
+      datefmt: "%Y-%m-%dT%H:%M:%S%z"
+  filters: []
+  handlers:
+    console:
+      class: logging.StreamHandler
+      formatter: verbose
+      stream: "ext://sys.stdout"
+  loggers:
+    emailer:
+      level: DEBUG
+    pika:
+      level: WARNING
+    rejected:
+      level: INFO
+    sprocketstracing:
+      level: DEBUG
+  root:
+    level: INFO
+    handlers:
+      - console
+  disable_existing_loggers: true
+  incremental: false

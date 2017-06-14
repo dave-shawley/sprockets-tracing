@@ -1,0 +1,40 @@
+version: '3'
+services:
+
+  mongodb:
+    image: mongo:3
+    ports:
+      - 27017
+
+  rabbitmq:
+    image: rabbitmq:3.6-management-alpine
+    ports:
+      - 5672
+      - 15672
+
+  zipkin:
+    image: openzipkin/zipkin
+    ports:
+      - 9411
+
+  consumer:
+    build: consumer
+    environment:
+      SMTP_USER: $MAILTRAP_USER
+      SMTP_PASSWORD: $MAILTRAP_PASSWORD
+
+  mail-poller:
+    build: mail-poller
+    environment:
+      MAILTRAP_BOXID: $MAILTRAP_BOXID
+      MAILTRAP_TOKEN: $MAILTRAP_TOKEN
+      MONGODB_URL: mongodb://mongodb/messages
+      ZIPKIN_URL: http://zipkin:9411/api/v1
+
+  message-server:
+    build: message-server
+    environment:
+      AMQP_URL: "amqp://rabbitmq:5672/%2f"
+      ZIPKIN_URL: http://zipkin:9411/api/v1
+    ports:
+      - 80

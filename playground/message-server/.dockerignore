@@ -1,0 +1,4 @@
+__pycache__/
+build/
+emailer.egg-info/
+env/
